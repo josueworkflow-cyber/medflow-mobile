@@ -1,19 +1,21 @@
 import axios from "axios";
 import { Storage } from "../utils/storage";
 
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || "http://10.0.2.2:3000";
-
+// Instância base — a baseURL será sobrescrita dinamicamente no interceptor
 export const api = axios.create({
-  baseURL: API_BASE_URL,
   timeout: 15000,
   headers: {
     "Content-Type": "application/json",
   },
 });
 
-// Request Interceptor: injetar JWT Bearer Token automaticamente
+// Request Interceptor: injeta JWT Bearer Token e URL dinâmica automaticamente
 api.interceptors.request.use(
   async (config) => {
+    // Lê a URL salva pelo usuário (ou padrão do .env)
+    const baseURL = await Storage.getApiUrl();
+    config.baseURL = baseURL;
+
     const token = await Storage.getToken();
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
