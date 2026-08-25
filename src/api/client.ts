@@ -39,3 +39,16 @@ export const setupResponseInterceptors = (onUnauthorized: () => void): number =>
     }
   );
 };
+
+// Helper centralizado para tratamento de erros amigáveis de rede/API
+export const formatApiError = (error: any): string => {
+  if (error?.code === "ECONNABORTED" || error?.message?.includes("timeout")) {
+    return "Tempo limite esgotado. O servidor demorou para responder. Verifique sua conexão.";
+  }
+  if (!error?.response && error?.request) {
+    return "Sem conexão com o servidor do ERP. Verifique o sinal Wi-Fi ou a URL da API nas Configurações.";
+  }
+  return error?.response?.data?.error || error?.message || "Ocorreu um erro inesperado na comunicação.";
+};
+
+

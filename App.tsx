@@ -8,6 +8,7 @@ import { AuthProvider } from "./src/store/AuthContext";
 import { useAuth } from "./src/hooks/useAuth";
 import { LoginScreen } from "./src/screens/LoginScreen";
 import { HomeScreen } from "./src/screens/HomeScreen";
+import { VisaoGeralScreen } from "./src/screens/VisaoGeralScreen";
 import { ScannerScreen } from "./src/screens/ScannerScreen";
 import { ProdutoDetalheScreen } from "./src/screens/ProdutoDetalheScreen";
 import { EntradaEstoqueScreen } from "./src/screens/EntradaEstoqueScreen";
@@ -19,15 +20,18 @@ import { ConfiguracoesScreen } from "./src/screens/ConfiguracoesScreen";
 import { CadastroProdutoScreen } from "./src/screens/CadastroProdutoScreen";
 import { MovimentacoesScreen } from "./src/screens/MovimentacoesScreen";
 import { LotesScreen } from "./src/screens/LotesScreen";
+import { InventarioScreen } from "./src/screens/InventarioScreen";
+import { AuditoriaEstoqueScreen } from "./src/screens/AuditoriaEstoqueScreen";
+import { RelatoriosEstoqueScreen } from "./src/screens/RelatoriosEstoqueScreen";
 import { setupResponseInterceptors, api } from "./src/api/client";
 import { RootStackParamList } from "./src/types/navigation";
 
-// ── Tema MedFlow — clean, alinhado com ERP (slate/neutro) ─────────────────
-const medflowTheme = {
+// ── Tema Dac Hospitalar — clean, alinhado com ERP (slate/neutro) ─────────────────
+const dacHospitalarTheme = {
   ...MD3LightTheme,
   colors: {
     ...MD3LightTheme.colors,
-    primary: "#0F172A",          // slate-900
+    primary: "#C41230",          // Vermelho DAC
     onPrimary: "#FFFFFF",
     primaryContainer: "#F1F5F9", // slate-100
     onPrimaryContainer: "#0F172A",
@@ -58,7 +62,7 @@ const NavigationRouter = () => {
     return () => {
       api.interceptors.response.eject(interceptorId);
     };
-  }, []);
+  }, [signOut]);
 
   if (state.isLoading) {
     return null;
@@ -72,17 +76,21 @@ const NavigationRouter = () => {
         ) : (
           <>
             <Stack.Screen name="Home" component={HomeScreen} />
+            <Stack.Screen name="VisaoGeral" component={VisaoGeralScreen} />
+            <Stack.Screen name="Movimentacoes" component={MovimentacoesScreen} />
             <Stack.Screen name="Scanner" component={ScannerScreen} />
             <Stack.Screen name="ProdutoDetalhe" component={ProdutoDetalheScreen} options={{ headerShown: false }} />
             <Stack.Screen name="EntradaEstoque" component={EntradaEstoqueScreen} />
             <Stack.Screen name="AjusteInventario" component={AjusteInventarioScreen} />
             <Stack.Screen name="BloqueioLote" component={BloqueioLoteScreen} />
             <Stack.Screen name="Transferencia" component={TransferenciaScreen} />
-            <Stack.Screen name="Alertas" component={AlertasScreen} />
-            <Stack.Screen name="Configuracoes" component={ConfiguracoesScreen} />
             <Stack.Screen name="CadastroProduto" component={CadastroProdutoScreen} />
-            <Stack.Screen name="Movimentacoes" component={MovimentacoesScreen} />
+            <Stack.Screen name="Alertas" component={AlertasScreen} />
+            <Stack.Screen name="AuditoriaEstoque" component={AuditoriaEstoqueScreen} />
+            <Stack.Screen name="RelatoriosEstoque" component={RelatoriosEstoqueScreen} />
             <Stack.Screen name="Lotes" component={LotesScreen} />
+            <Stack.Screen name="Inventario" component={InventarioScreen} />
+            <Stack.Screen name="Configuracoes" component={ConfiguracoesScreen} />
           </>
         )}
       </Stack.Navigator>
@@ -93,7 +101,7 @@ const NavigationRouter = () => {
 export default function App() {
   return (
     <SafeAreaProvider>
-      <PaperProvider theme={medflowTheme}>
+      <PaperProvider theme={dacHospitalarTheme}>
         <AuthProvider>
           <NavigationRouter />
           <StatusBar style="dark" />

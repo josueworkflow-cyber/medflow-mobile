@@ -1,18 +1,18 @@
-# Plano de Implementação — MedFlow Mobile (Módulo de Estoque)
+# Plano de Implementação — Dac Hospitalar Mobile (Módulo de Estoque)
 **Versão:** 1.2  
 **Data:** Junho/2026  
 **Responsável Técnico:** CTO  
-**Projeto:** APK Android para operações de estoque do ERP MedFlow  
+**Projeto:** APK Android para operações de estoque do ERP Dac Hospitalar  
 
 ---
 
 ## 1. Visão Geral do Projeto
 
 ### Objetivo
-Desenvolver um aplicativo Android nativo (APK via sideload) para operadores de estoque realizarem movimentações físicas em tempo real, integrado à API REST existente do ERP MedFlow (Next.js 15).
+Desenvolver um aplicativo Android nativo (APK via sideload) para operadores de estoque realizarem movimentações físicas em tempo real, integrado à API REST existente do ERP Dac Hospitalar (Next.js 15).
 
 ### Contexto
-O ERP MedFlow já possui API REST estruturada com módulos de estoque e produto maduros. O app mobile será um **cliente consumidor dessa API**, sem lógica de negócio própria — toda regra de negócio permanece no backend.
+O ERP Dac Hospitalar já possui API REST estruturada com módulos de estoque e produto maduros. O app mobile será um **cliente consumidor dessa API**, sem lógica de negócio própria — toda regra de negócio permanece no backend.
 
 ### Dispositivo Alvo
 - **Tipo:** Celular Android dedicado ao estoque (não pessoal)
@@ -117,7 +117,7 @@ ScannerScreen
 
 **Body:**
 ```json
-{ "email": "operador@medflow.com", "password": "senha" }
+{ "email": "operador@dachospitalar.com", "password": "senha" }
 ```
 
 **Resposta (200):**
@@ -213,8 +213,8 @@ Monorepo foi descartado — o build do Expo não tem dependência do Next.js, de
 
 ```
 GitHub (organização ou conta pessoal)
-├── medflow-erp          ← Next.js 15 (ERP Web + API REST) — já existe
-└── medflow-mobile       ← React Native + Expo (APK Android) — a criar
+├── dac-hospitalar-erp          ← Next.js 15 (ERP Web + API REST) — já existe
+└── dac-hospitalar-mobile       ← React Native + Expo (APK Android) — a criar
 ```
 
 ### 6.2 Convenção de Branches
@@ -262,7 +262,7 @@ chore: instala dependências iniciais do projeto Expo
         │  GET  /api/produto?search=7891234567890
         │  ...
         ▼
-[ERP MedFlow — Next.js API]
+[ERP Dac Hospitalar — Next.js API]
         │
         │  Prisma ORM
         ▼
@@ -275,29 +275,29 @@ Toda regra de negócio, validação de permissão e auditoria fica exclusivament
 
 **Estratégia do MVP: espelhamento manual com disciplina de processo.**
 
-O repositório `medflow-mobile` terá uma pasta `src/types/` com os types TypeScript espelhando os models relevantes do Prisma:
+O repositório `dac-hospitalar-mobile` terá uma pasta `src/types/` com os types TypeScript espelhando os models relevantes do Prisma:
 
 ```
-medflow-mobile/src/types/
+dac-hospitalar-mobile/src/types/
 ├── produto.ts       ← Espelho de model Produto
 ├── estoque.ts       ← Espelho de Lote, EstoqueAtual, MovimentacaoEstoque
 └── auth.ts          ← Type Usuario, AuthState
 ```
 
-**Regra de processo obrigatória:** qualquer alteração de schema no `medflow-erp` (Prisma migration) que afete os models de Produto, Lote, EstoqueAtual ou MovimentacaoEstoque deve obrigatoriamente incluir a atualização dos types correspondentes no `medflow-mobile` na **mesma PR ou na PR imediatamente seguinte**.
+**Regra de processo obrigatória:** qualquer alteração de schema no `dac-hospitalar-erp` (Prisma migration) que afete os models de Produto, Lote, EstoqueAtual ou MovimentacaoEstoque deve obrigatoriamente incluir a atualização dos types correspondentes no `dac-hospitalar-mobile` na **mesma PR ou na PR imediatamente seguinte**.
 
 > Para v2: avaliar extração dos types para pacote npm privado (`medflow-shared`) publicado via GitHub Packages, eliminando o risco de desincronização.
 
 ### 6.6 Variáveis de Ambiente por Repositório
 
-**medflow-erp** (já existente, verificar se possui):
+**dac-hospitalar-erp** (já existente, verificar se possui):
 ```env
 AUTH_SECRET=<segredo para assinar JWT>
 DATABASE_URL=postgresql://...
 NEXTAUTH_URL=http://localhost:3000
 ```
 
-**medflow-mobile** (novo arquivo `.env` na raiz):
+**dac-hospitalar-mobile** (novo arquivo `.env` na raiz):
 ```env
 EXPO_PUBLIC_API_BASE_URL=http://192.168.X.X:3000
 ```
@@ -309,7 +309,7 @@ EXPO_PUBLIC_API_BASE_URL=http://192.168.X.X:3000
 ## 7. Estrutura de Pastas do App Mobile
 
 ```
-MedFlowMobile/
+Dac HospitalarMobile/
 ├── app.json                  ← Configurações Expo (nome, ícone, permissões)
 ├── .env                      ← API_BASE_URL
 ├── src/
@@ -493,8 +493,8 @@ npm install -g expo-cli eas-cli
 
 ### Criar e rodar o projeto:
 ```bash
-npx create-expo-app MedFlowMobile --template blank-typescript
-cd MedFlowMobile
+npx create-expo-app Dac HospitalarMobile --template blank-typescript
+cd Dac HospitalarMobile
 npx expo start
 # Pressionar 'a' para abrir no emulador Android
 ```
@@ -541,11 +541,11 @@ Esta seção documenta o andamento real e as decisões de implementação tomada
   - `S0-03` (Ajuste Route) — ✅ Concluída
   - `S0-04` (Transferência Route) — ✅ Concluída
   - `S0-05` (Testes Manuais) — ✅ Concluída
-- **Merge:** PR #2 mergeada e integrada na branch `main` do repositório `medflow-erp`.
+- **Merge:** PR #2 mergeada e integrada na branch `main` do repositório `dac-hospitalar-erp`.
 
 ### 13.2 Sprint 1: Setup + Autenticação Mobile
 - **O que foi feito:**
-  - Clonado o repositório inicialmente vazio no GitHub em `/Users/josuetecla/Documents/medflow-mobile`.
+  - Clonado o repositório inicialmente vazio no GitHub em `/Users/josuetecla/Documents/dac-hospitalar-mobile`.
   - Inicialização da estrutura de arquivos utilizando o template em branco TypeScript do Expo (SDK 52/56).
   - Instalação e configuração de dependências necessárias: `axios`, `@react-native-async-storage/async-storage`, `expo-camera`, `@react-navigation/native`, `@react-navigation/native-stack`, `react-native-screens`, `react-native-safe-area-context`, `react-native-paper` e `react-native-vector-icons`.
   - Estruturação do fluxo global de autenticação com os arquivos: `storage.ts`, `client.ts`, `auth.ts`, `AuthContext.tsx`, `useAuth.ts`, `LoginScreen.tsx`, `HomeScreen.tsx` e o arquivo de inicialização de rotas `App.tsx`.
@@ -565,18 +565,18 @@ Esta seção documenta o andamento real e as decisões de implementação tomada
   - `S1-06` (LoginScreen funcional) — ✅ Concluída
   - `S1-07` (HomeScreen placeholder) — ✅ Concluída
   - `S1-08` (Testes de compilação com `tsc`) — ✅ Concluída com zero erros.
-- **Push:** Subido e integrado na branch `develop` do repositório `medflow-mobile`.
+- **Push:** Subido e integrado na branch `develop` do repositório `dac-hospitalar-mobile`.
 
 ---
 
 ## 14. Estado Atual e Próximos Passos
 
 ### 14.1 Estado dos Repositórios
-1. **ERP MedFlow (Backend):**
-   - Repositório: `medflow-erp` (Next.js)
+1. **ERP Dac Hospitalar (Backend):**
+   - Repositório: `dac-hospitalar-erp` (Next.js)
    - Branch com as alterações: `main` (Mergeado e atualizado via pull remoto).
-2. **Coletor MedFlow (Mobile):**
-   - Repositório: `medflow-mobile` (Expo/React Native)
+2. **Coletor Dac Hospitalar (Mobile):**
+   - Repositório: `dac-hospitalar-mobile` (Expo/React Native)
    - Branch com as alterações: `develop` (Criada, commitada e enviada via push).
 
 ### 14.2 Próxima Etapa: Sprint 2

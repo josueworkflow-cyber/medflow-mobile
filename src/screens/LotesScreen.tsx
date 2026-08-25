@@ -1,15 +1,16 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   StyleSheet,
   View,
-  ScrollView,
+  FlatList,
   TouchableOpacity,
   StatusBar,
   Platform,
   ActivityIndicator,
   TextInput,
+  RefreshControl,
 } from "react-native";
-import { Text, Surface } from "react-native-paper";
+import { Text, Surface, Badge } from "react-native-paper";
 import { useNavigation } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../types/navigation";
@@ -19,107 +20,90 @@ import { EstoqueConsultaAPI, LoteResumo } from "../api/estoque-consulta";
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, "Lotes">;
 
 const C = {
-  headerBg: "#1B2A4A",
-  bg: "#F0F2F5",
+  headerBg: "#8B0C21",
+  bg: "#F8FAFC",
   white: "#FFFFFF",
-  textDark: "#1E293B",
-  textGray: "#6B7280",
-  chevron: "#C5CAD0",
-  border: "#E5E7EB",
-  
-  successColor: "#22A85A",
-  warningColor: "#F97316",
-  dangerColor: "#EF4444",
-  primaryColor: "#3B5998",
+  slate100: "#F1F5F9",
+  slate200: "#E2E8F0",
+  slate300: "#CBD5E1",
+  slate500: "#64748B",
+  slate700: "#334155",
+  slate900: "#0F172A",
+  border: "#E2E8F0",
+
+  successColor: "#16A34A",
+  warningColor: "#D97706",
+  dangerColor: "#DC2626",
+  primaryColor: "#C41230",
+  infoColor: "#2563EB",
 };
 
 export const LotesScreen = () => {
   const navigation = useNavigation<NavigationProp>();
 
-  // Estados de dados
   const [lotes, setLotes] = useState<LoteResumo[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
-  // Estados de busca (com dequeue) e filtros
+  // Busca e Filtro de Status
   const [busca, setBusca] = useState("");
-  const [debouncedBusca, setDebouncedBusca] = useState("");
   const [filtroStatus, setFiltroStatus] = useState<"TODOS" | "DISPONIVEL" | "BLOQUEADO" | "QUARENTENA" | "VENCIDO">("TODOS");
 
-  const handleRefresh = () => setRefreshTrigger((prev) => prev + 1);
-
-  // Efeito de Debounce para a busca textual (500ms)
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedBusca(busca);
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [busca]);
-
-  // Efeito de carregamento baseado na busca debounced e trigger de recarga
-  useEffect(() => {
-    let cancelled = false;
-    const carregar = async () => {
-      setIsLoading(true);
-      setError(null);
-      try {
-        const queryParam = debouncedBusca.trim() ? { search: debouncedBusca.trim() } : undefined;
-        const res = await EstoqueConsultaAPI.getLotes(queryParam);
-        if (!cancelled) {
-          setLotes(res || []);
-        }
-      } catch (err: any) {
-        console.error(err);
-        if (!cancelled) {
-          setError("Erro ao carregar lotes. Verifique sua conexão.");
-        }
-      } finally {
-        if (!cancelled) setIsLoading(false);
-      }
-    };
-
-    carregar();
-    return () => {
-      cancelled = true;
-    };
-  }, [debouncedBusca, refreshTrigger]);
-
-  // Filtragem local baseada no status selecionado
-  const filtrados = lotes.filter((l) => {
-    if (filtroStatus !== "TODOS" && l.status !== filtroStatus) {
-      return false;
-    }
-    return true;
-  });
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "DISPONIVEL":
-        return C.successColor;
-      case "QUARENTENA":
-        return C.warningColor;
-      case "BLOQUEADO":
-        return C.dangerColor;
-      case "VENCIDO":
-        return C.textGray;
-      default:
-        return C.textGray;
+  const carregarLotes = async () => {
+    setError(null);
+    try {
+      const res = await EstoqueConsultaAPI.getLotes();
+      setLotes(res || []);
+    } catch (err: any) {
+      console.error(err);
+      setError("Erro ao carregar lotes. Verifique sua conexão.");
+    } finally {
+      setIsLoading(false);
+      setRefreshing(false);
     }
   };
 
-  const getStatusLabel = (status: string) => {
+  useEffect(() => {
+    setIsLoading(true);
+    carregarLotes();
+  }, []);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    carregarLotes();
+  };
+
+  // Filtragem rápida em memória (muito rápida e instantânea)
+  const filtrados = useMemo(() => {
+    let result = lotes;
+    if (filtroStatus !== "TODOS") {
+      result = result.filter((l) => l.status === filtroStatus);
+    }
+    if (busca.trim()) {
+      const term = busca.toLowerCase();
+      result = result.filter(
+        (l) =>
+          (l.numeroLote || "").toLowerCase().includes(term) ||
+          (l.produto?.descricao || "").toLowerCase().includes(term) ||
+          (l.produto?.fabricante || "").toLowerCase().includes(term)
+      );
+    }
+    return result;
+  }, [lotes, filtroStatus, busca]);
+
+  const getStatusConfig = (status: string) => {
     switch (status) {
       case "DISPONIVEL":
-        return "DISPONÍVEL";
+        return { color: C.successColor, bg: "#DCFCE7", label: "DISPONÍVEL" };
       case "QUARENTENA":
-        return "QUARENTENA";
+        return { color: C.warningColor, bg: "#FEF3C7", label: "QUARENTENA" };
       case "BLOQUEADO":
-        return "BLOQUEADO";
+        return { color: C.dangerColor, bg: "#FEE2E2", label: "BLOQUEADO" };
       case "VENCIDO":
-        return "VENCIDO";
+        return { color: C.slate500, bg: C.slate100, label: "VENCIDO" };
       default:
-        return status;
+        return { color: C.slate500, bg: C.slate100, label: status };
     }
   };
 
@@ -138,6 +122,121 @@ export const LotesScreen = () => {
     return dateStr;
   };
 
+  const renderItem = useCallback(
+    ({ item: l }: { item: LoteResumo }) => {
+      const totalDisp = l.estoqueAtual?.reduce((acc, e) => acc + e.quantidadeDisponivel, 0) ?? 0;
+      const totalRes = l.estoqueAtual?.reduce((acc, e) => acc + e.quantidadeReservada, 0) ?? 0;
+      const totalBloq = l.estoqueAtual?.reduce((acc, e) => acc + e.quantidadeBloqueada, 0) ?? 0;
+      const badge = getStatusConfig(l.status);
+
+      return (
+        <Surface style={s.card} elevation={1}>
+          <View style={s.cardHeader}>
+            <View style={s.loteBadge}>
+              <MaterialCommunityIcons name="tag-outline" size={14} color={C.slate700} />
+              <Text style={s.loteTitle}>{l.numeroLote}</Text>
+            </View>
+            <View style={[s.badge, { backgroundColor: badge.bg }]}>
+              <Text style={[s.badgeText, { color: badge.color }]}>{badge.label}</Text>
+            </View>
+          </View>
+
+          <Text style={s.productName}>{l.produto?.descricao}</Text>
+
+          <View style={s.validadeContainer}>
+            <MaterialCommunityIcons name="calendar-outline" size={14} color={C.slate500} />
+            <Text style={s.validadeText}>Validade: {formatValidade(l.validade)}</Text>
+          </View>
+
+          <View style={s.divider} />
+
+          <View style={s.stockContainer}>
+            <View style={s.stockCol}>
+              <Text style={s.stockLabel}>Disponível</Text>
+              <Text style={[s.stockValue, { color: C.successColor }]}>{totalDisp}</Text>
+            </View>
+            <View style={s.stockDivider} />
+            <View style={s.stockCol}>
+              <Text style={s.stockLabel}>Reservado</Text>
+              <Text style={[s.stockValue, { color: C.warningColor }]}>{totalRes}</Text>
+            </View>
+            <View style={s.stockDivider} />
+            <View style={s.stockCol}>
+              <Text style={s.stockLabel}>Bloqueado</Text>
+              <Text style={[s.stockValue, { color: C.dangerColor }]}>{totalBloq}</Text>
+            </View>
+          </View>
+
+          {/* Ações Rápidas do Lote */}
+          <View style={s.actionsRow}>
+            <TouchableOpacity
+              style={s.actionBtnSecondary}
+              onPress={() =>
+                navigation.navigate("BloqueioLote", {
+                  produto: {
+                    id: l.produtoId,
+                    nome: l.produto.descricao,
+                    codigoInterno: null,
+                    codigoBarras: null,
+                    unidade: "UN",
+                  },
+                  lote: {
+                    id: l.id,
+                    numeroLote: l.numeroLote,
+                    validade: l.validade,
+                    status: l.status as any,
+                    estoqueAtual: (l.estoqueAtual as any) || [],
+                  },
+                })
+              }
+            >
+              <MaterialCommunityIcons
+                name="shield-lock-outline"
+                size={16}
+                color={l.status === "DISPONIVEL" ? C.dangerColor : C.successColor}
+              />
+              <Text
+                style={[
+                  s.actionBtnText,
+                  { color: l.status === "DISPONIVEL" ? C.dangerColor : C.successColor },
+                ]}
+              >
+                {l.status === "DISPONIVEL" ? "Bloquear" : "Desbloquear"}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={s.actionBtnPrimary}
+              onPress={() =>
+                navigation.navigate("Transferencia", {
+                  produto: {
+                    id: l.produtoId,
+                    nome: l.produto.descricao,
+                    codigoInterno: null,
+                    codigoBarras: null,
+                    unidade: "UN",
+                  },
+                  lote: {
+                    id: l.id,
+                    numeroLote: l.numeroLote,
+                    validade: l.validade,
+                    status: l.status as any,
+                    estoqueAtual: (l.estoqueAtual as any) || [],
+                  },
+                  saldo: (l.estoqueAtual as any)?.[0],
+                })
+              }
+            >
+              <MaterialCommunityIcons name="archive-arrow-down-outline" size={16} color="#FFFFFF" />
+              <Text style={[s.actionBtnText, { color: "#FFFFFF" }]}>Transferir</Text>
+            </TouchableOpacity>
+          </View>
+        </Surface>
+      );
+    },
+    [navigation]
+  );
+
   return (
     <View style={s.root}>
       <StatusBar barStyle="light-content" backgroundColor={C.headerBg} />
@@ -147,142 +246,88 @@ export const LotesScreen = () => {
         <TouchableOpacity style={s.headerLeftBtn} onPress={() => navigation.goBack()}>
           <MaterialCommunityIcons name="chevron-left" size={28} color="#FFFFFF" />
         </TouchableOpacity>
-        <Text style={s.headerTitle}>Lotes</Text>
-        <TouchableOpacity style={s.headerRightBtn} onPress={handleRefresh} disabled={isLoading}>
-          <MaterialCommunityIcons name="sync" size={24} color="#FFFFFF" />
+        <View style={s.headerCenter}>
+          <Text style={s.headerTitle}>Gestão de Lotes</Text>
+          <Text style={s.headerSubtitle}>Validades, Quarentena e Transferência</Text>
+        </View>
+        <TouchableOpacity style={s.headerRightBtn} onPress={onRefresh} disabled={isLoading}>
+          <MaterialCommunityIcons name="refresh" size={22} color="#FFFFFF" />
         </TouchableOpacity>
       </View>
 
-      {isLoading && lotes.length === 0 ? (
+      {/* ── Barra Superior de Busca e Filtros ─── */}
+      <View style={s.topBar}>
+        <View style={s.searchContainer}>
+          <MaterialCommunityIcons name="magnify" size={20} color={C.slate500} style={s.searchIcon} />
+          <TextInput
+            style={s.searchInput}
+            placeholder="Buscar por lote, produto ou fabricante..."
+            placeholderTextColor={C.slate500}
+            value={busca}
+            onChangeText={setBusca}
+            autoCapitalize="none"
+          />
+          {busca.length > 0 && (
+            <TouchableOpacity onPress={() => setBusca("")} style={{ padding: 4 }}>
+              <MaterialCommunityIcons name="close" size={16} color={C.slate500} />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Filtros em Pill */}
+        <View style={s.filterRow}>
+          {(["TODOS", "DISPONIVEL", "BLOQUEADO", "QUARENTENA", "VENCIDO"] as const).map((st) => (
+            <TouchableOpacity
+              key={st}
+              style={[s.filterPill, filtroStatus === st && s.filterPillActive]}
+              onPress={() => setFiltroStatus(st)}
+            >
+              <Text style={[s.filterPillText, filtroStatus === st && s.filterPillTextActive]}>
+                {st === "TODOS" ? "Todos" : st === "DISPONIVEL" ? "Disponível" : st === "BLOQUEADO" ? "Bloqueado" : st === "QUARENTENA" ? "Quarentena" : "Vencido"}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+
+      {/* ── Lista Virtualizada de Lotes ─── */}
+      {isLoading && !refreshing ? (
         <View style={s.centerContainer}>
           <ActivityIndicator size="large" color={C.primaryColor} />
           <Text style={s.loadingText}>Carregando lotes...</Text>
         </View>
       ) : error && lotes.length === 0 ? (
         <View style={s.centerContainer}>
-          <MaterialCommunityIcons name="alert-circle-outline" size={48} color={C.dangerColor} />
+          <MaterialCommunityIcons name="alert-circle-outline" size={44} color={C.dangerColor} />
           <Text style={s.errorText}>{error}</Text>
-          <TouchableOpacity style={s.retryBtn} onPress={handleRefresh}>
+          <TouchableOpacity style={s.retryBtn} onPress={onRefresh}>
             <Text style={s.retryText}>Tentar Novamente</Text>
           </TouchableOpacity>
         </View>
       ) : (
-        <View style={{ flex: 1 }}>
-          {/* ── Campo de busca ─── */}
-          <View style={s.searchSection}>
-            <View style={s.searchContainer}>
-              <MaterialCommunityIcons name="magnify" size={20} color={C.textGray} style={s.searchIcon} />
-              <TextInput
-                style={s.searchInput}
-                placeholder="Buscar por lote ou nome de produto..."
-                placeholderTextColor={C.textGray}
-                value={busca}
-                onChangeText={setBusca}
-                autoCapitalize="none"
-                clearButtonMode="while-editing"
-              />
-              {isLoading && (
-                <ActivityIndicator size="small" color={C.primaryColor} style={{ marginLeft: 8 }} />
-              )}
+        <FlatList
+          data={filtrados}
+          keyExtractor={(item) => String(item.id)}
+          renderItem={renderItem}
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={5}
+          contentContainerStyle={s.listContent}
+          showsVerticalScrollIndicator={false}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[C.primaryColor]} />}
+          ListHeaderComponent={
+            <View style={s.listHeader}>
+              <Text style={s.listHeaderTitle}>LOTES ENCONTRADOS</Text>
+              <Badge style={{ backgroundColor: C.slate700, fontWeight: "700" }}>{filtrados.length}</Badge>
             </View>
-          </View>
-
-          {/* ── Filtro rápido de status ─── */}
-          <View style={s.filterContainer}>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={s.filterScrollContent}
-            >
-              {(["TODOS", "DISPONIVEL", "BLOQUEADO", "QUARENTENA", "VENCIDO"] as const).map((status) => (
-                <TouchableOpacity
-                  key={status}
-                  style={[
-                    s.filterTab,
-                    filtroStatus === status && s.filterTabActive,
-                  ]}
-                  onPress={() => setFiltroStatus(status)}
-                >
-                  <Text
-                    style={[
-                      s.filterTabText,
-                      filtroStatus === status && s.filterTabTextActive,
-                    ]}
-                  >
-                    {status === "TODOS" ? "Todos" : status === "DISPONIVEL" ? "Disponível" : status === "BLOQUEADO" ? "Bloqueado" : status === "QUARENTENA" ? "Quarentena" : "Vencido"}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-
-          <ScrollView
-            style={s.scroll}
-            contentContainerStyle={s.scrollContent}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-          >
-            {/* ── Lista de Lotes ─── */}
-            <Text style={s.listTitle}>LOTES CADASTRADOS ({filtrados.length})</Text>
-
-            {filtrados.length === 0 ? (
-              <View style={s.emptyContainer}>
-                <MaterialCommunityIcons name="tag-multiple-outline" size={48} color={C.textGray} />
-                <Text style={s.emptyText}>Nenhum lote correspondente.</Text>
-              </View>
-            ) : (
-              filtrados.map((l) => {
-                const totalDisp = l.estoqueAtual?.reduce((acc, e) => acc + e.quantidadeDisponivel, 0) ?? 0;
-                const totalRes  = l.estoqueAtual?.reduce((acc, e) => acc + e.quantidadeReservada, 0) ?? 0;
-                const totalBloq = l.estoqueAtual?.reduce((acc, e) => acc + e.quantidadeBloqueada, 0) ?? 0;
-                
-                const badgeColor = getStatusColor(l.status);
-
-                return (
-                  <Surface key={l.id} style={s.card} elevation={1}>
-                    <View style={s.cardHeader}>
-                      <View style={s.loteBadge}>
-                        <MaterialCommunityIcons name="tag-outline" size={14} color={C.textDark} />
-                        <Text style={s.loteTitle}>{l.numeroLote}</Text>
-                      </View>
-                      <View style={[s.badge, { backgroundColor: badgeColor + "15" }]}>
-                        <Text style={[s.badgeText, { color: badgeColor }]}>
-                          {getStatusLabel(l.status)}
-                        </Text>
-                      </View>
-                    </View>
-
-                    <Text style={s.productName}>{l.produto?.descricao}</Text>
-
-                    <View style={s.validadeContainer}>
-                      <MaterialCommunityIcons name="calendar-outline" size={14} color={C.textGray} />
-                      <Text style={s.validadeText}>Validade: {formatValidade(l.validade)}</Text>
-                    </View>
-
-                    <View style={s.divider} />
-
-                    <View style={s.stockContainer}>
-                      <View style={s.stockCol}>
-                        <Text style={s.stockLabel}>Disponível</Text>
-                        <Text style={[s.stockValue, { color: C.successColor }]}>{totalDisp}</Text>
-                      </View>
-                      <View style={s.stockDivider} />
-                      <View style={s.stockCol}>
-                        <Text style={s.stockLabel}>Reservado</Text>
-                        <Text style={[s.stockValue, { color: C.warningColor }]}>{totalRes}</Text>
-                      </View>
-                      <View style={s.stockDivider} />
-                      <View style={s.stockCol}>
-                        <Text style={s.stockLabel}>Bloqueado</Text>
-                        <Text style={[s.stockValue, { color: C.dangerColor }]}>{totalBloq}</Text>
-                      </View>
-                    </View>
-                  </Surface>
-                );
-              })
-            )}
-          </ScrollView>
-        </View>
+          }
+          ListEmptyComponent={
+            <Surface style={s.emptyContainer} elevation={0}>
+              <MaterialCommunityIcons name="tag-multiple-outline" size={44} color={C.slate500} />
+              <Text style={s.emptyText}>Nenhum lote correspondente.</Text>
+            </Surface>
+          }
+        />
       )}
     </View>
   );
@@ -293,152 +338,129 @@ const s = StyleSheet.create({
     flex: 1,
     backgroundColor: C.bg,
   },
-
-  /* Header */
   header: {
     backgroundColor: C.headerBg,
-    paddingTop: Platform.OS === "android" ? 50 : 60,
-    paddingBottom: 20,
+    paddingTop: Platform.OS === "android" ? 45 : 55,
+    paddingBottom: 16,
     paddingHorizontal: 16,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#FFFFFF",
-  },
-  headerLeftBtn: {
-    width: 40,
-    height: 40,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  headerRightBtn: {
-    width: 40,
-    height: 40,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  headerLeftBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
+  headerRightBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
+  headerCenter: { flex: 1, alignItems: "center" },
+  headerTitle: { fontSize: 17, fontWeight: "700", color: "#FFFFFF" },
+  headerSubtitle: { fontSize: 11, color: "rgba(255, 255, 255, 0.8)", marginTop: 1 },
 
-  /* Scroll */
-  scroll: {
-    flex: 1,
-  },
-  scrollContent: {
+  topBar: {
+    backgroundColor: C.white,
     paddingHorizontal: 16,
-    paddingBottom: 32,
-  },
-
-  /* Busca */
-  searchSection: {
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 10,
+    paddingTop: 12,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
+    gap: 8,
   },
   searchContainer: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: C.white,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    height: 46,
+    backgroundColor: C.slate100,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    height: 40,
     borderWidth: 1,
     borderColor: C.border,
   },
-  searchIcon: {
-    marginRight: 8,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 14,
-    color: C.textDark,
-    paddingVertical: 8,
-  },
+  searchIcon: { marginRight: 6 },
+  searchInput: { flex: 1, fontSize: 13, color: C.slate900, paddingVertical: 4 },
 
-  /* Filtro de Status */
-  filterContainer: {
-    height: 50,
-    marginBottom: 10,
+  filterRow: {
+    flexDirection: "row",
+    gap: 6,
+    paddingVertical: 2,
   },
-  filterScrollContent: {
-    paddingHorizontal: 16,
-    gap: 8,
-    alignItems: "center",
+  filterPill: {
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    backgroundColor: C.slate100,
+    borderWidth: 1,
+    borderColor: C.border,
   },
-  filterTab: {
-    paddingHorizontal: 14,
-    height: 34,
-    borderRadius: 17,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#E5E7EB",
-  },
-  filterTabActive: {
+  filterPillActive: {
     backgroundColor: C.primaryColor,
+    borderColor: C.primaryColor,
   },
-  filterTabText: {
+  filterPillText: {
     fontSize: 11,
     fontWeight: "700",
-    color: C.textGray,
+    color: C.slate700,
   },
-  filterTabTextActive: {
-    color: C.white,
+  filterPillTextActive: {
+    color: "#FFFFFF",
   },
 
-  /* Título da Lista */
-  listTitle: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: C.textGray,
-    letterSpacing: 1,
+  listContent: {
+    padding: 16,
+    paddingBottom: 32,
+  },
+  listHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     marginBottom: 10,
-    marginLeft: 2,
-    marginTop: 6,
+  },
+  listHeaderTitle: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: C.slate700,
+    letterSpacing: 0.5,
   },
 
-  /* Card */
   card: {
     backgroundColor: C.white,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: C.border,
   },
   cardHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 8,
+    marginBottom: 6,
   },
   loteBadge: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#F3F4F6",
-    paddingVertical: 4,
+    backgroundColor: C.slate100,
+    paddingVertical: 3,
     paddingHorizontal: 8,
     borderRadius: 6,
     gap: 4,
   },
   loteTitle: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: C.textDark,
+    fontSize: 13,
+    fontWeight: "800",
+    color: C.slate900,
   },
   badge: {
-    paddingVertical: 4,
+    paddingVertical: 3,
     paddingHorizontal: 8,
     borderRadius: 6,
   },
   badgeText: {
     fontSize: 10,
-    fontWeight: "700",
+    fontWeight: "800",
+    letterSpacing: 0.5,
   },
   productName: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: C.textDark,
-    marginBottom: 6,
+    fontSize: 14,
+    fontWeight: "800",
+    color: C.slate900,
+    marginBottom: 4,
   },
   validadeContainer: {
     flexDirection: "row",
@@ -446,14 +468,14 @@ const s = StyleSheet.create({
     gap: 4,
   },
   validadeText: {
-    fontSize: 12,
-    color: C.textGray,
-    fontWeight: "500",
+    fontSize: 11,
+    color: C.slate500,
+    fontWeight: "600",
   },
   divider: {
     height: 1,
-    backgroundColor: "#F3F4F6",
-    marginVertical: 12,
+    backgroundColor: C.slate100,
+    marginVertical: 10,
   },
   stockContainer: {
     flexDirection: "row",
@@ -465,13 +487,13 @@ const s = StyleSheet.create({
   },
   stockDivider: {
     width: 1,
-    backgroundColor: "#E5E7EB",
-    height: 24,
+    backgroundColor: C.slate200,
+    height: 20,
   },
   stockLabel: {
-    fontSize: 10,
-    color: C.textGray,
-    fontWeight: "600",
+    fontSize: 9,
+    color: C.slate500,
+    fontWeight: "700",
     textTransform: "uppercase",
     marginBottom: 2,
   },
@@ -480,45 +502,50 @@ const s = StyleSheet.create({
     fontWeight: "800",
   },
 
-  /* States */
+  actionsRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 12,
+  },
+  actionBtnSecondary: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: C.border,
+    backgroundColor: C.white,
+    gap: 4,
+  },
+  actionBtnPrimary: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: C.primaryColor,
+    gap: 4,
+  },
+  actionBtnText: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
+
   centerContainer: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
-    backgroundColor: C.bg,
   },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 14,
-    color: C.textGray,
-  },
-  errorText: {
-    marginTop: 12,
-    fontSize: 14,
-    color: C.textGray,
-    textAlign: "center",
-    marginBottom: 20,
-  },
-  retryBtn: {
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    backgroundColor: C.primaryColor,
-    borderRadius: 8,
-  },
-  retryText: {
-    color: C.white,
-    fontWeight: "600",
-    fontSize: 14,
-  },
-  emptyContainer: {
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 40,
-    gap: 8,
-  },
-  emptyText: {
-    fontSize: 13,
-    color: C.textGray,
-  },
+  loadingText: { marginTop: 12, fontSize: 13, color: C.slate500, fontWeight: "600" },
+  errorText: { fontSize: 13, color: C.dangerColor, textAlign: "center", marginTop: 8 },
+  retryBtn: { paddingVertical: 10, paddingHorizontal: 20, backgroundColor: C.primaryColor, borderRadius: 8, marginTop: 12 },
+  retryText: { color: C.white, fontWeight: "700", fontSize: 13 },
+  emptyContainer: { backgroundColor: C.white, borderRadius: 12, padding: 32, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: C.border },
+  emptyText: { fontSize: 13, color: C.slate500, marginTop: 6 },
 });

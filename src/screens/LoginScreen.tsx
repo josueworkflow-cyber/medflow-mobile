@@ -9,24 +9,31 @@ import {
   TextInput as RNTextInput,
   StatusBar,
   ActivityIndicator,
+  Image,
 } from "react-native";
-import { Text } from "react-native-paper";
+import { Text, Surface, Divider } from "react-native-paper";
 import { useAuth } from "../hooks/useAuth";
 import { AuthAPI } from "../api/auth";
 import { Storage } from "../utils/storage";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 
-// Design tokens idênticos ao ERP
 const C = {
-  bg: "#F8FAFC",          // slate-50
+  headerBg: "#8B0C21",
+  primaryColor: "#C41230",
+  bg: "#F8FAFC",
   white: "#FFFFFF",
+  slate100: "#F1F5F9",
   slate200: "#E2E8F0",
+  slate300: "#CBD5E1",
   slate400: "#94A3B8",
   slate500: "#64748B",
+  slate700: "#334155",
   slate900: "#0F172A",
-  blue500: "#3B82F6",
-  red50: "#FEF2F2",
-  red100: "#FEE2E2",
-  red600: "#DC2626",
+  border: "#E2E8F0",
+  dangerColor: "#DC2626",
+  dangerBg: "#FEF2F2",
+  dangerBorder: "#FEE2E2",
+  successColor: "#16A34A",
 };
 
 export const LoginScreen = () => {
@@ -34,10 +41,12 @@ export const LoginScreen = () => {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showServer, setShowServer] = useState(false);
   const [apiUrl, setApiUrl] = useState("");
+  const [savedUrlSuccess, setSavedUrlSuccess] = useState(false);
 
   useEffect(() => {
     Storage.getApiUrl().then(setApiUrl);
@@ -45,7 +54,7 @@ export const LoginScreen = () => {
 
   const handleLogin = async () => {
     if (!email.trim() || !password) {
-      setError("Preencha todos os campos.");
+      setError("Informe seu e-mail corporativo e senha de acesso.");
       return;
     }
     setIsLoading(true);
@@ -59,7 +68,7 @@ export const LoginScreen = () => {
       if (err.response?.data?.error) {
         setError(err.response.data.error);
       } else {
-        setError("Servidor inacessível. Verifique o endereço abaixo.");
+        setError("Não foi possível conectar ao servidor. Verifique o endereço da API abaixo.");
         setShowServer(true);
       }
     } finally {
@@ -67,9 +76,20 @@ export const LoginScreen = () => {
     }
   };
 
+  const handleSaveApiUrl = async () => {
+    const u = apiUrl.trim().replace(/\/$/, "");
+    if (u) {
+      await Storage.saveApiUrl(u);
+      setError(null);
+      setSavedUrlSuccess(true);
+      setTimeout(() => setSavedUrlSuccess(false), 3000);
+    }
+  };
+
   return (
     <View style={s.root}>
       <StatusBar barStyle="dark-content" backgroundColor={C.bg} />
+
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={{ flex: 1 }}
@@ -79,105 +99,163 @@ export const LoginScreen = () => {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* Logo */}
-          <View style={s.logoArea}>
-            <View style={s.logoBox}>
-              <Text style={s.logoText}>MF</Text>
+          {/* Card Principal de Login */}
+          <Surface style={s.card} elevation={3}>
+            {/* Logotipo Oficial */}
+            <View style={s.logoArea}>
+              <Image
+                source={require("../../assets/logo-dac.png")}
+                style={s.logoImage}
+                resizeMode="contain"
+              />
             </View>
-            <Text style={s.title}>MedFlow Mobile</Text>
-            <Text style={s.subtitle}>Gestão Hospitalar Inteligente</Text>
-          </View>
 
-          {/* Card */}
-          <View style={s.card}>
+            <Divider style={{ marginVertical: 14 }} />
 
+            {/* Mensagem de Erro */}
             {error && (
               <View style={s.errorBox}>
+                <MaterialCommunityIcons name="alert-circle-outline" size={20} color={C.dangerColor} />
                 <Text style={s.errorText}>{error}</Text>
               </View>
             )}
 
-            {/* Email */}
+            {/* Campo: E-mail */}
             <View style={s.fieldGroup}>
-              <Text style={s.label}>EMAIL CORPORATIVO</Text>
-              <RNTextInput
-                style={[s.input, error ? s.inputError : null]}
-                placeholder="seu@email.com"
-                placeholderTextColor={C.slate400}
-                value={email}
-                onChangeText={(t) => { setEmail(t); setError(null); }}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoCorrect={false}
-                editable={!isLoading}
-              />
+              <Text style={s.label}>E-MAIL CORPORATIVO</Text>
+              <View style={[s.inputWrapper, error && s.inputWrapperError]}>
+                <MaterialCommunityIcons name="email-outline" size={20} color={C.slate500} style={s.inputIcon} />
+                <RNTextInput
+                  style={s.input}
+                  placeholder="seu@email.com"
+                  placeholderTextColor={C.slate400}
+                  value={email}
+                  onChangeText={(t) => { setEmail(t); setError(null); }}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  editable={!isLoading}
+                />
+              </View>
             </View>
 
-            {/* Senha */}
+            {/* Campo: Senha */}
             <View style={s.fieldGroup}>
               <Text style={s.label}>SENHA DE ACESSO</Text>
-              <RNTextInput
-                style={[s.input, error ? s.inputError : null]}
-                placeholder="••••••••"
-                placeholderTextColor={C.slate400}
-                value={password}
-                onChangeText={(t) => { setPassword(t); setError(null); }}
-                secureTextEntry
-                editable={!isLoading}
-              />
+              <View style={[s.inputWrapper, error && s.inputWrapperError]}>
+                <MaterialCommunityIcons name="lock-outline" size={20} color={C.slate500} style={s.inputIcon} />
+                <RNTextInput
+                  style={s.input}
+                  placeholder="••••••••"
+                  placeholderTextColor={C.slate400}
+                  value={password}
+                  onChangeText={(t) => { setPassword(t); setError(null); }}
+                  secureTextEntry={!showPassword}
+                  editable={!isLoading}
+                />
+                <TouchableOpacity
+                  onPress={() => setShowPassword(!showPassword)}
+                  style={s.eyeBtn}
+                  activeOpacity={0.7}
+                >
+                  <MaterialCommunityIcons
+                    name={showPassword ? "eye-off-outline" : "eye-outline"}
+                    size={20}
+                    color={C.slate500}
+                  />
+                </TouchableOpacity>
+              </View>
             </View>
 
-            {/* Botão */}
+            {/* Botão de Entrada */}
             <TouchableOpacity
               style={[s.btn, isLoading && s.btnDisabled]}
               onPress={handleLogin}
               disabled={isLoading}
               activeOpacity={0.85}
             >
-              {isLoading
-                ? <ActivityIndicator color={C.white} size="small" />
-                : <Text style={s.btnText}>Entrar no Sistema</Text>
-              }
+              {isLoading ? (
+                <View style={s.btnContent}>
+                  <ActivityIndicator color={C.white} size="small" />
+                  <Text style={s.btnText}>Autenticando...</Text>
+                </View>
+              ) : (
+                <View style={s.btnContent}>
+                  <MaterialCommunityIcons name="login" size={20} color={C.white} />
+                  <Text style={s.btnText}>Entrar no Sistema</Text>
+                </View>
+              )}
             </TouchableOpacity>
-          </View>
+          </Surface>
 
-          {/* Configurações do servidor */}
+          {/* Configurações do Servidor (Colapsável) */}
           <TouchableOpacity
             style={s.serverToggle}
             onPress={() => setShowServer(!showServer)}
+            activeOpacity={0.7}
           >
+            <MaterialCommunityIcons
+              name={showServer ? "server-network" : "server-network-off"}
+              size={16}
+              color={C.slate500}
+            />
             <Text style={s.serverToggleText}>
-              Configurações do servidor {showServer ? "▲" : "▼"}
+              {showServer ? "Ocultar configurações de servidor" : "Configurar endereço do servidor API"}
             </Text>
+            <MaterialCommunityIcons
+              name={showServer ? "chevron-up" : "chevron-down"}
+              size={16}
+              color={C.slate500}
+            />
           </TouchableOpacity>
 
           {showServer && (
-            <View style={s.serverCard}>
-              <Text style={s.label}>ENDEREÇO DA API</Text>
-              <RNTextInput
-                style={s.input}
-                placeholder="http://192.168.0.46:3000"
-                placeholderTextColor={C.slate400}
-                value={apiUrl}
-                onChangeText={setApiUrl}
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType="url"
-                editable={!isLoading}
-              />
+            <Surface style={s.serverCard} elevation={1}>
+              <View style={s.serverCardHeader}>
+                <MaterialCommunityIcons name="server" size={18} color={C.slate700} />
+                <Text style={s.serverCardTitle}>Conexão com ERP MedFlow</Text>
+              </View>
+              <Text style={s.serverHelpText}>
+                Informe o IP ou domínio do servidor central onde o ERP está rodando:
+              </Text>
+              <View style={s.inputWrapper}>
+                <MaterialCommunityIcons name="web" size={18} color={C.slate500} style={s.inputIcon} />
+                <RNTextInput
+                  style={s.input}
+                  placeholder="http://192.168.0.46:3000"
+                  placeholderTextColor={C.slate400}
+                  value={apiUrl}
+                  onChangeText={setApiUrl}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="url"
+                  editable={!isLoading}
+                />
+              </View>
               <TouchableOpacity
-                style={s.btnOutline}
-                onPress={async () => {
-                  const u = apiUrl.trim().replace(/\/$/, "");
-                  if (u) { await Storage.saveApiUrl(u); setError(null); }
-                }}
+                style={s.btnSaveServer}
+                onPress={handleSaveApiUrl}
+                activeOpacity={0.8}
               >
-                <Text style={s.btnOutlineText}>Salvar endereço</Text>
+                <Text style={s.btnSaveServerText}>Salvar Endereço da API</Text>
               </TouchableOpacity>
-            </View>
+              {savedUrlSuccess && (
+                <View style={s.successBox}>
+                  <MaterialCommunityIcons name="check-circle" size={16} color={C.successColor} />
+                  <Text style={s.successText}>Endereço salvo com sucesso!</Text>
+                </View>
+              )}
+            </Surface>
           )}
 
-          <Text style={s.footer}>© 2026 MedFlow Systems. Todos os direitos reservados.</Text>
+          {/* Rodapé Corporativo */}
+          <View style={s.footerArea}>
+            <View style={s.securityBadge}>
+              <MaterialCommunityIcons name="shield-check-outline" size={14} color={C.slate500} />
+              <Text style={s.securityText}>Acesso Seguro • Criptografia TLS 256-bit</Text>
+            </View>
+            <Text style={s.footer}>© 2026 MedFlow ERP Systems. Todos os direitos reservados.</Text>
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
     </View>
@@ -185,85 +263,203 @@ export const LoginScreen = () => {
 };
 
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: C.bg },
+  root: {
+    flex: 1,
+    backgroundColor: C.bg,
+  },
   scroll: {
     flexGrow: 1,
     justifyContent: "center",
-    paddingHorizontal: 24,
-    paddingVertical: 48,
+    paddingHorizontal: 20,
+    paddingVertical: 32,
   },
 
-  // Logo
-  logoArea: { alignItems: "center", marginBottom: 32 },
-  logoBox: {
-    width: 64, height: 64, borderRadius: 16,
-    backgroundColor: C.slate900,
-    alignItems: "center", justifyContent: "center",
-    marginBottom: 14,
-  },
-  logoText: { color: C.white, fontSize: 22, fontWeight: "800", letterSpacing: 1 },
-  title: { fontSize: 22, fontWeight: "700", color: C.slate900, marginBottom: 4 },
-  subtitle: { fontSize: 13, color: C.slate500 },
-
-  // Card
+  /* Card */
   card: {
     backgroundColor: C.white,
-    borderRadius: 16,
+    borderRadius: 20,
     padding: 24,
     borderWidth: 1,
-    borderColor: C.slate200,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    elevation: 3,
+    borderColor: C.border,
+    width: "100%",
+    maxWidth: 420,
+    alignSelf: "center",
   },
-  fieldGroup: { marginBottom: 16 },
+
+  /* Logo */
+  logoArea: {
+    alignItems: "center",
+    paddingVertical: 6,
+  },
+  logoImage: {
+    width: 210,
+    height: 48,
+    marginBottom: 10,
+  },
+
+  /* Campos */
+  fieldGroup: {
+    marginBottom: 14,
+  },
   label: {
-    fontSize: 11, fontWeight: "600",
-    color: C.slate500, letterSpacing: 0.8,
-    marginBottom: 6, textTransform: "uppercase",
+    fontSize: 11,
+    fontWeight: "700",
+    color: C.slate700,
+    letterSpacing: 0.6,
+    marginBottom: 6,
+  },
+  inputWrapper: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: C.slate100,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: C.border,
+    paddingHorizontal: 12,
+    height: 48,
+  },
+  inputWrapperError: {
+    borderColor: C.dangerColor,
+    backgroundColor: C.dangerBg,
+  },
+  inputIcon: {
+    marginRight: 10,
   },
   input: {
-    borderWidth: 1, borderColor: C.slate200,
-    borderRadius: 12,
-    paddingHorizontal: 16, paddingVertical: 14,
-    fontSize: 14, color: C.slate900,
-    backgroundColor: C.white,
+    flex: 1,
+    fontSize: 14,
+    color: C.slate900,
+    height: "100%",
   },
-  inputError: { borderColor: "#FCA5A5" },
+  eyeBtn: {
+    padding: 6,
+  },
+
+  /* Erro */
   errorBox: {
-    backgroundColor: C.red50,
-    borderWidth: 1, borderColor: C.red100,
-    borderRadius: 10, padding: 12, marginBottom: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: C.dangerBg,
+    borderWidth: 1,
+    borderColor: C.dangerBorder,
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 14,
+    gap: 8,
   },
-  errorText: { color: C.red600, fontSize: 13, fontWeight: "500", textAlign: "center" },
+  errorText: {
+    flex: 1,
+    color: C.dangerColor,
+    fontSize: 12,
+    fontWeight: "600",
+  },
 
-  // Botão primário
+  /* Botão Primário */
   btn: {
-    backgroundColor: C.slate900,
-    borderRadius: 12, paddingVertical: 16,
-    alignItems: "center", marginTop: 8,
+    backgroundColor: C.headerBg,
+    borderRadius: 10,
+    height: 48,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 8,
   },
-  btnDisabled: { opacity: 0.55 },
-  btnText: { color: C.white, fontSize: 14, fontWeight: "600", letterSpacing: 0.3 },
-
-  // Botão outline
-  btnOutline: {
-    borderWidth: 1, borderColor: C.slate200,
-    borderRadius: 12, paddingVertical: 13,
-    alignItems: "center", marginTop: 12,
-    backgroundColor: C.white,
+  btnDisabled: {
+    opacity: 0.6,
   },
-  btnOutlineText: { color: C.slate900, fontSize: 13, fontWeight: "600" },
+  btnContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  btnText: {
+    color: C.white,
+    fontSize: 14,
+    fontWeight: "700",
+    letterSpacing: 0.5,
+  },
 
-  // Servidor
-  serverToggle: { alignItems: "center", paddingVertical: 20 },
-  serverToggleText: { fontSize: 12, color: C.slate400 },
+  /* Servidor */
+  serverToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 18,
+    gap: 6,
+  },
+  serverToggleText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: C.slate500,
+  },
   serverCard: {
-    backgroundColor: C.white, borderRadius: 12,
-    padding: 18, borderWidth: 1, borderColor: C.slate200,
+    backgroundColor: C.white,
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: C.border,
+    marginBottom: 16,
+  },
+  serverCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 4,
+  },
+  serverCardTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: C.slate900,
+  },
+  serverHelpText: {
+    fontSize: 11,
+    color: C.slate500,
+    marginBottom: 10,
+  },
+  btnSaveServer: {
+    backgroundColor: C.slate900,
+    borderRadius: 8,
+    height: 40,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 10,
+  },
+  btnSaveServerText: {
+    color: C.white,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  successBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: 8,
+  },
+  successText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: C.successColor,
   },
 
-  footer: { textAlign: "center", fontSize: 11, color: C.slate400, marginTop: 24 },
+  /* Footer */
+  footerArea: {
+    alignItems: "center",
+    marginTop: 8,
+  },
+  securityBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginBottom: 6,
+  },
+  securityText: {
+    fontSize: 11,
+    color: C.slate500,
+    fontWeight: "600",
+  },
+  footer: {
+    textAlign: "center",
+    fontSize: 11,
+    color: C.slate400,
+  },
 });

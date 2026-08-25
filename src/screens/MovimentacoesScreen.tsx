@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   StyleSheet,
   View,
@@ -8,8 +8,9 @@ import {
   Platform,
   ActivityIndicator,
   TextInput,
+  Modal,
 } from "react-native";
-import { Text, Surface } from "react-native-paper";
+import { Text, Surface, Badge, Divider, Button } from "react-native-paper";
 import { useNavigation } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../types/navigation";
@@ -19,34 +20,59 @@ import { EstoqueConsultaAPI, Movimentacao, TotaisMovimentacoes } from "../api/es
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, "Movimentacoes">;
 
 const C = {
-  headerBg: "#1B2A4A",
-  bg: "#F0F2F5",
+  headerBg: "#8B0C21",
+  bg: "#F8FAFC",
   white: "#FFFFFF",
-  textDark: "#1E293B",
-  textGray: "#6B7280",
-  chevron: "#C5CAD0",
-  border: "#E5E7EB",
-  
-  primaryColor: "#3B5998",
-  successColor: "#22A85A",
-  warningColor: "#F97316",
-  dangerColor: "#EF4444",
-  infoColor: "#3B82F6",
+  slate100: "#F1F5F9",
+  slate200: "#E2E8F0",
+  slate300: "#CBD5E1",
+  slate500: "#64748B",
+  slate700: "#334155",
+  slate900: "#0F172A",
+  border: "#E2E8F0",
+
+  primaryColor: "#C41230",
+  successColor: "#16A34A",
+  warningColor: "#D97706",
+  dangerColor: "#DC2626",
+  infoColor: "#2563EB",
+  purpleColor: "#7C3AED",
 };
 
 export const MovimentacoesScreen = () => {
   const navigation = useNavigation<NavigationProp>();
-  
-  // Estados de controle de dados
+
+  // Estados de dados
   const [movimentacoes, setMovimentacoes] = useState<Movimentacao[]>([]);
   const [totais, setTotais] = useState<TotaisMovimentacoes | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
-  // Filtros
-  const [tipoFiltro, setTipoFiltro] = useState<"" | "ENTRADA" | "SAIDA" | "AJUSTE">("");
+  // Filtros rápidos
+  const [tipoFiltro, setTipoFiltro] = useState<
+    "" | "ENTRADA" | "SAIDA" | "AJUSTE" | "RESERVA" | "BLOQUEIO" | "PERDA" | "TRANSFERENCIA" | "DEVOLUCAO" | "CANCELAMENTO_RESERVA" | "DESBLOQUEIO"
+  >("");
+  const [periodoFiltro, setPeriodoFiltro] = useState<"hoje" | "7d" | "30d" | "todos">("todos");
   const [busca, setBusca] = useState("");
+  const [detalheId, setDetalheId] = useState<number | null>(null);
+
+  // Filtros avançados (Modal)
+  const [modalFiltrosAberto, setModalFiltrosAberto] = useState(false);
+  const [usuarioFiltro, setUsuarioFiltro] = useState("");
+  const [depositoFiltro, setDepositoFiltro] = useState("");
+  const [dataInicio, setDataInicio] = useState("");
+  const [dataFim, setDataFim] = useState("");
+  const [filtrosAplicados, setFiltrosAplicados] = useState({ usuario: "", deposito: "", inicio: "", fim: "" });
+
+  const totalFiltrosAvancadosAtivos = useMemo(() => {
+    let count = 0;
+    if (filtrosAplicados.usuario) count++;
+    if (filtrosAplicados.deposito) count++;
+    if (filtrosAplicados.inicio) count++;
+    if (filtrosAplicados.fim) count++;
+    return count;
+  }, [filtrosAplicados]);
 
   const handleRefresh = () => setRefreshTrigger((prev) => prev + 1);
 
@@ -56,11 +82,35 @@ export const MovimentacoesScreen = () => {
       setIsLoading(true);
       setError(null);
       try {
-        const params = tipoFiltro ? { tipo: tipoFiltro } : undefined;
+        // Cálculo de datas pelo período rápido
+        let inicioCalculado = filtrosAplicados.inicio;
+        let fimCalculado = filtrosAplicados.fim;
+
+        if (!inicioCalculado && periodoFiltro !== "todos") {
+          const d = new Date();
+          if (periodoFiltro === "hoje") {
+            inicioCalculado = new Date(d.getFullYear(), d.getMonth(), d.getDate()).toISOString();
+          } else if (periodoFiltro === "7d") {
+            d.setDate(d.getDate() - 7);
+            inicioCalculado = d.toISOString();
+          } else if (periodoFiltro === "30d") {
+            d.setDate(d.getDate() - 30);
+            inicioCalculado = d.toISOString();
+          }
+        }
+
+        const params = {
+          ...(tipoFiltro ? { tipo: tipoFiltro } : {}),
+          ...(filtrosAplicados.usuario ? { usuario: filtrosAplicados.usuario } : {}),
+          ...(filtrosAplicados.deposito ? { localizacao: filtrosAplicados.deposito } : {}),
+          ...(inicioCalculado ? { dataInicio: inicioCalculado } : {}),
+          ...(fimCalculado ? { dataFim: fimCalculado } : {}),
+        };
+
         const res = await EstoqueConsultaAPI.getMovimentacoes(params);
         if (!cancelled) {
           setMovimentacoes(res.movimentacoes || []);
-          setTotais(res.totais);
+          setTotais(res.totais || null);
         }
       } catch (err: any) {
         console.error(err);
@@ -76,33 +126,63 @@ export const MovimentacoesScreen = () => {
     return () => {
       cancelled = true;
     };
-  }, [tipoFiltro, refreshTrigger]);
+  }, [tipoFiltro, periodoFiltro, refreshTrigger, filtrosAplicados]);
 
-  // Filtragem local por produto.descricao
-  const filtrados = movimentacoes.filter((m) => {
-    if (busca.trim()) {
-      const term = busca.toLowerCase();
-      const descricaoMatch = (m.produto?.descricao || "").toLowerCase().includes(term);
-      const codigoMatch = (m.produto?.codigoInterno || "").toLowerCase().includes(term);
-      return descricaoMatch || codigoMatch;
-    }
-    return true;
-  });
+  // Filtragem rápida local por texto (busca por descrição ou código)
+  const filtrados = useMemo(() => {
+    if (!busca.trim()) return movimentacoes;
+    const term = busca.toLowerCase();
+    return movimentacoes.filter(
+      (m) =>
+        (m.produto?.descricao || "").toLowerCase().includes(term) ||
+        (m.produto?.codigoInterno || "").toLowerCase().includes(term) ||
+        (m.lote?.numeroLote || "").toLowerCase().includes(term)
+    );
+  }, [busca, movimentacoes]);
+
+  const aplicarFiltrosModal = () => {
+    setFiltrosAplicados({
+      usuario: usuarioFiltro.trim(),
+      deposito: depositoFiltro.trim(),
+      inicio: dataInicio.trim(),
+      fim: dataFim.trim(),
+    });
+    setModalFiltrosAberto(false);
+  };
+
+  const limparFiltrosModal = () => {
+    setUsuarioFiltro("");
+    setDepositoFiltro("");
+    setDataInicio("");
+    setDataFim("");
+    setFiltrosAplicados({ usuario: "", deposito: "", inicio: "", fim: "" });
+    setModalFiltrosAberto(false);
+  };
 
   const getBadgeConfig = (tipo: string) => {
     switch (tipo) {
       case "ENTRADA":
-        return { color: C.successColor, label: "ENTRADA", sign: "+" };
+        return { color: C.successColor, bg: "#DCFCE7", label: "ENTRADA", sign: "+" };
       case "SAIDA":
-        return { color: C.dangerColor, label: "SAÍDA", sign: "-" };
+        return { color: C.dangerColor, bg: "#FEE2E2", label: "SAÍDA", sign: "-" };
       case "AJUSTE":
-        return { color: C.infoColor, label: "AJUSTE", sign: "~" };
+        return { color: C.warningColor, bg: "#FEF3C7", label: "AJUSTE", sign: "~" };
       case "RESERVA":
-        return { color: C.warningColor, label: "RESERVA", sign: "~" };
+        return { color: C.purpleColor, bg: "#F3E8FF", label: "RESERVA", sign: "~" };
       case "BLOQUEIO":
-        return { color: C.textGray, label: "BLOQUEIO", sign: "~" };
+        return { color: C.dangerColor, bg: "#FEE2E2", label: "BLOQUEIO", sign: "⊘" };
+      case "DESBLOQUEIO":
+        return { color: C.successColor, bg: "#DCFCE7", label: "DESBLOQ.", sign: "✓" };
+      case "TRANSFERENCIA":
+        return { color: C.infoColor, bg: "#DBEAFE", label: "TRANSF.", sign: "⇄" };
+      case "DEVOLUCAO":
+        return { color: "#059669", bg: "#D1FAE5", label: "DEVOLUÇÃO", sign: "↺" };
+      case "PERDA":
+        return { color: "#991B1B", bg: "#FEE2E2", label: "PERDA", sign: "✖" };
+      case "CANCELAMENTO_RESERVA":
+        return { color: C.slate500, bg: C.slate100, label: "CANC. RES.", sign: "↩" };
       default:
-        return { color: "#9B59B6", label: tipo, sign: "~" };
+        return { color: C.primaryColor, bg: "#FEE2E2", label: tipo, sign: "~" };
     }
   };
 
@@ -128,29 +208,114 @@ export const MovimentacoesScreen = () => {
     <View style={s.root}>
       <StatusBar barStyle="light-content" backgroundColor={C.headerBg} />
 
-      {/* ── Header ─── */}
+      {/* ── HEADER ─── */}
       <View style={s.header}>
-        <TouchableOpacity style={s.headerLeftBtn} onPress={() => navigation.goBack()}>
+        <TouchableOpacity style={s.headerBtn} onPress={() => navigation.goBack()}>
           <MaterialCommunityIcons name="chevron-left" size={28} color="#FFFFFF" />
         </TouchableOpacity>
-        <Text style={s.headerTitle}>Movimentações</Text>
-        <TouchableOpacity style={s.headerRightBtn} onPress={handleRefresh} disabled={isLoading}>
-          <MaterialCommunityIcons name="sync" size={24} color="#FFFFFF" />
+        <View style={s.headerCenter}>
+          <Text style={s.headerTitle}>Movimentações</Text>
+          <Text style={s.headerSubtitle}>Entradas, Saídas, Ajustes e Auditoria</Text>
+        </View>
+        <TouchableOpacity style={s.headerBtn} onPress={handleRefresh} disabled={isLoading}>
+          <MaterialCommunityIcons name="refresh" size={22} color="#FFFFFF" />
         </TouchableOpacity>
       </View>
 
+      {/* ── BARRA COMPACTA FIXA DE FILTROS SUPERIORES ─── */}
+      <View style={s.compactFilterBar}>
+        {/* Linha de Busca + Botão de Filtro Avançado */}
+        <View style={s.searchRow}>
+          <View style={s.searchContainer}>
+            <MaterialCommunityIcons name="magnify" size={20} color={C.slate500} style={s.searchIcon} />
+            <TextInput
+              style={s.searchInput}
+              placeholder="Buscar por produto, código ou lote..."
+              placeholderTextColor={C.slate500}
+              value={busca}
+              onChangeText={setBusca}
+            />
+            {busca !== "" && (
+              <TouchableOpacity onPress={() => setBusca("")} style={{ padding: 4 }}>
+                <MaterialCommunityIcons name="close" size={16} color={C.slate500} />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <TouchableOpacity
+            style={[s.filterToggleBtn, totalFiltrosAvancadosAtivos > 0 && s.filterToggleBtnActive]}
+            onPress={() => setModalFiltrosAberto(true)}
+          >
+            <MaterialCommunityIcons
+              name="filter-variant"
+              size={20}
+              color={totalFiltrosAvancadosAtivos > 0 ? "#FFFFFF" : C.slate700}
+            />
+            {totalFiltrosAvancadosAtivos > 0 && (
+              <Badge style={s.filterCountBadge}>{totalFiltrosAvancadosAtivos}</Badge>
+            )}
+          </TouchableOpacity>
+        </View>
+
+        {/* Linha 1: Pills de Tipo */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.pillsRow}>
+          {(
+            [
+              { id: "", label: "Todos" },
+              { id: "ENTRADA", label: "Entradas" },
+              { id: "SAIDA", label: "Saídas" },
+              { id: "AJUSTE", label: "Ajustes" },
+              { id: "RESERVA", label: "Reservas" },
+              { id: "TRANSFERENCIA", label: "Transferências" },
+              { id: "BLOQUEIO", label: "Bloqueios" },
+              { id: "DEVOLUCAO", label: "Devoluções" },
+              { id: "PERDA", label: "Perdas" },
+            ] as const
+          ).map((t) => (
+            <TouchableOpacity
+              key={t.id}
+              style={[s.pill, tipoFiltro === t.id && s.pillActive]}
+              onPress={() => setTipoFiltro(t.id)}
+            >
+              <Text style={[s.pillText, tipoFiltro === t.id && s.pillTextActive]}>{t.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+
+        {/* Linha 2: Pills de Período Rápido */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.pillsRow}>
+          {(
+            [
+              { id: "todos", label: "Todo o histórico" },
+              { id: "hoje", label: "Hoje" },
+              { id: "7d", label: "Últimos 7 dias" },
+              { id: "30d", label: "30 dias" },
+            ] as const
+          ).map((p) => (
+            <TouchableOpacity
+              key={p.id}
+              style={[s.pillSub, periodoFiltro === p.id && s.pillSubActive]}
+              onPress={() => setPeriodoFiltro(p.id)}
+            >
+              <Text style={[s.pillSubText, periodoFiltro === p.id && s.pillSubTextActive]}>{p.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+
+      {/* ── CONTEÚDO PRINCIPAL ─── */}
       {isLoading && movimentacoes.length === 0 ? (
         <View style={s.centerContainer}>
           <ActivityIndicator size="large" color={C.primaryColor} />
-          <Text style={s.loadingText}>Carregando histórico...</Text>
+          <Text style={s.loadingText}>Carregando movimentações...</Text>
         </View>
       ) : error && movimentacoes.length === 0 ? (
         <View style={s.centerContainer}>
-          <MaterialCommunityIcons name="alert-circle-outline" size={48} color={C.dangerColor} />
+          <MaterialCommunityIcons name="alert-circle-outline" size={44} color={C.dangerColor} />
           <Text style={s.errorText}>{error}</Text>
-          <TouchableOpacity style={s.retryBtn} onPress={handleRefresh}>
-            <Text style={s.retryText}>Tentar Novamente</Text>
-          </TouchableOpacity>
+          <Button mode="contained" onPress={handleRefresh} style={{ backgroundColor: C.primaryColor, marginTop: 10 }}>
+            Tentar Novamente
+          </Button>
         </View>
       ) : (
         <ScrollView
@@ -159,7 +324,7 @@ export const MovimentacoesScreen = () => {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* ── KPIs em Linha ─── */}
+          {/* ── KPIs Compactos em Carrossel ─── */}
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -167,129 +332,203 @@ export const MovimentacoesScreen = () => {
             contentContainerStyle={s.kpiScrollContent}
           >
             <Surface style={[s.kpiCard, { borderLeftColor: C.successColor }]} elevation={1}>
-              <Text style={s.kpiLabel}>Entradas/mês</Text>
-              <Text style={[s.kpiValue, { color: C.successColor }]}>
-                {totais?.entradasMes ?? 0}
-              </Text>
+              <Text style={s.kpiLabel}>Entradas / Mês</Text>
+              <Text style={[s.kpiValue, { color: C.successColor }]}>{totais?.entradasMes ?? 0}</Text>
             </Surface>
             <Surface style={[s.kpiCard, { borderLeftColor: C.dangerColor }]} elevation={1}>
-              <Text style={s.kpiLabel}>Saídas/mês</Text>
-              <Text style={[s.kpiValue, { color: C.dangerColor }]}>
-                {totais?.saidasMes ?? 0}
-              </Text>
+              <Text style={s.kpiLabel}>Saídas / Mês</Text>
+              <Text style={[s.kpiValue, { color: C.dangerColor }]}>{totais?.saidasMes ?? 0}</Text>
             </Surface>
-            <Surface style={[s.kpiCard, { borderLeftColor: C.infoColor }]} elevation={1}>
-              <Text style={s.kpiLabel}>Ajustes/mês</Text>
-              <Text style={[s.kpiValue, { color: C.infoColor }]}>
-                {totais?.ajustesMes ?? 0}
-              </Text>
+            <Surface style={[s.kpiCard, { borderLeftColor: C.warningColor }]} elevation={1}>
+              <Text style={s.kpiLabel}>Ajustes / Mês</Text>
+              <Text style={[s.kpiValue, { color: C.warningColor }]}>{totais?.ajustesMes ?? 0}</Text>
             </Surface>
             <Surface style={[s.kpiCard, { borderLeftColor: C.primaryColor }]} elevation={1}>
               <Text style={s.kpiLabel}>Mov. do Dia</Text>
-              <Text style={[s.kpiValue, { color: C.primaryColor }]}>
-                {totais?.movDia ?? 0}
-              </Text>
+              <Text style={[s.kpiValue, { color: C.primaryColor }]}>{totais?.movDia ?? 0}</Text>
             </Surface>
           </ScrollView>
 
-          {/* ── Campo de busca ─── */}
-          <View style={s.searchContainer}>
-            <MaterialCommunityIcons name="magnify" size={20} color={C.textGray} style={s.searchIcon} />
-            <TextInput
-              style={s.searchInput}
-              placeholder="Buscar por descrição de produto..."
-              placeholderTextColor={C.textGray}
-              value={busca}
-              onChangeText={setBusca}
-              autoCapitalize="none"
-              clearButtonMode="while-editing"
-            />
+          {/* ── Título com Totalizador ─── */}
+          <View style={s.listHeaderRow}>
+            <Text style={s.listTitle}>REGISTROS ENCONTRADOS</Text>
+            <Badge style={{ backgroundColor: C.slate700, fontWeight: "700" }}>{filtrados.length}</Badge>
           </View>
 
-          {/* ── Filtro de tipo ─── */}
-          <View style={s.filterRow}>
-            {(["", "ENTRADA", "SAIDA", "AJUSTE"] as const).map((tipo) => (
-              <TouchableOpacity
-                key={tipo}
-                style={[
-                  s.filterTab,
-                  tipoFiltro === tipo && s.filterTabActive,
-                ]}
-                onPress={() => setTipoFiltro(tipo)}
-              >
-                <Text
-                  style={[
-                    s.filterTabText,
-                    tipoFiltro === tipo && s.filterTabTextActive,
-                  ]}
-                >
-                  {tipo === "" ? "Todos" : tipo === "ENTRADA" ? "Entrada" : tipo === "SAIDA" ? "Saída" : "Ajuste"}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          {/* ── Histórico de Movimentações ─── */}
-          <Text style={s.listTitle}>MOVIMENTAÇÕES ({filtrados.length})</Text>
-
+          {/* ── Lista de Movimentações ─── */}
           {filtrados.length === 0 ? (
-            <View style={s.emptyContainer}>
-              <MaterialCommunityIcons name="history" size={48} color={C.textGray} />
-              <Text style={s.emptyText}>Nenhuma movimentação registrada.</Text>
-            </View>
+            <Surface style={s.emptyContainer} elevation={0}>
+              <MaterialCommunityIcons name="clipboard-text-search-outline" size={44} color={C.slate500} />
+              <Text style={s.emptyTitle}>Nenhuma movimentação no filtro</Text>
+              <Text style={s.emptySub}>Ajuste os filtros ou o período acima para visualizar outros registros.</Text>
+            </Surface>
           ) : (
             filtrados.map((m) => {
               const badge = getBadgeConfig(m.tipo);
-              const opSign = m.estornado ? "Estornado" : `${badge.sign} ${m.quantidade}`;
+              const isExpanded = detalheId === m.id;
 
               return (
-                <Surface key={m.id} style={s.card} elevation={1}>
-                  <View style={s.cardHeader}>
-                    <View style={[s.badge, { backgroundColor: badge.color + "15" }]}>
-                      <Text style={[s.badgeText, { color: badge.color }]}>{badge.label}</Text>
+                <TouchableOpacity
+                  key={m.id}
+                  activeOpacity={0.85}
+                  onPress={() => setDetalheId(isExpanded ? null : m.id)}
+                >
+                  <Surface style={s.card} elevation={1}>
+                    <View style={s.cardHeader}>
+                      <View style={[s.badge, { backgroundColor: badge.bg }]}>
+                        <Text style={[s.badgeText, { color: badge.color }]}>{badge.label}</Text>
+                      </View>
+                      <Text style={s.dateText}>{formatData(m.createdAt)}</Text>
                     </View>
-                    <Text style={s.dateText}>{formatData(m.createdAt)}</Text>
-                  </View>
 
-                  <Text style={s.productName}>{m.produto?.descricao}</Text>
+                    <Text style={s.productName}>{m.produto?.descricao}</Text>
 
-                  {m.produto?.codigoInterno && (
-                    <Text style={s.productCode}>Cód: {m.produto.codigoInterno}</Text>
-                  )}
-
-                  {m.lote?.numeroLote && (
-                    <View style={s.loteRow}>
-                      <MaterialCommunityIcons name="tag-outline" size={14} color={C.textGray} />
-                      <Text style={s.loteText}>Lote: {m.lote.numeroLote}</Text>
+                    <View style={s.metaRow}>
+                      {m.produto?.codigoInterno && (
+                        <Text style={s.productCode}>SKU: {m.produto.codigoInterno}</Text>
+                      )}
+                      {m.lote?.numeroLote && (
+                        <Text style={s.loteText}>• Lote: {m.lote.numeroLote}</Text>
+                      )}
                     </View>
-                  )}
 
-                  <View style={s.divider} />
+                    <Divider style={{ marginVertical: 8 }} />
 
-                  <View style={s.footerRow}>
-                    <View style={s.userCol}>
-                      <Text style={s.footerLabel}>Operador</Text>
-                      <Text style={s.footerValue}>{m.usuarioRef?.nome || m.usuario}</Text>
+                    <View style={s.footerRow}>
+                      <View style={s.userCol}>
+                        <Text style={s.footerLabel}>Operador</Text>
+                        <Text style={s.footerValue}>{m.usuarioRef?.nome || m.usuario}</Text>
+                      </View>
+                      <View style={s.valueCol}>
+                        <Text style={s.footerLabel}>Quantidade</Text>
+                        <Text
+                          style={[
+                            s.quantityText,
+                            { color: m.estornado ? C.slate500 : badge.color },
+                            m.estornado && s.strikeThrough,
+                          ]}
+                        >
+                          {m.estornado ? "Estornado" : `${badge.sign} ${m.quantidade}`}
+                        </Text>
+                      </View>
                     </View>
-                    <View style={s.valueCol}>
-                      <Text style={s.footerLabel}>Quantidade</Text>
-                      <Text
-                        style={[
-                          s.quantityText,
-                          { color: m.estornado ? C.textGray : badge.color },
-                          m.estornado && s.strikeThrough,
-                        ]}
-                      >
-                        {opSign}
-                      </Text>
-                    </View>
-                  </View>
-                </Surface>
+
+                    {/* Detalhes Expansíveis */}
+                    {isExpanded && (
+                      <View style={s.expandedBox}>
+                        <Divider style={{ marginVertical: 8 }} />
+                        {m.saldoAnterior !== null && m.saldoResultante !== null && (
+                          <Text style={s.expandedText}>
+                            Saldo: <Text style={{ fontWeight: "700" }}>{m.saldoAnterior} → {m.saldoResultante}</Text>
+                          </Text>
+                        )}
+                        <Text style={s.expandedText}>
+                          Depósito/Local: <Text style={{ fontWeight: "700" }}>{m.localizacao?.nome || "Geral"}</Text>
+                        </Text>
+                        {m.origem && (
+                          <Text style={s.expandedText}>
+                            Origem: <Text style={{ fontWeight: "700" }}>{m.origem}</Text>
+                          </Text>
+                        )}
+                        {m.destino && (
+                          <Text style={s.expandedText}>
+                            Destino: <Text style={{ fontWeight: "700" }}>{m.destino}</Text>
+                          </Text>
+                        )}
+                        {m.observacao && (
+                          <Text style={s.expandedText}>
+                            Observação: <Text style={{ fontWeight: "700" }}>{m.observacao}</Text>
+                          </Text>
+                        )}
+                        <Text style={[s.expandedText, { color: C.slate500, marginTop: 4, fontSize: 10 }]}>
+                          ID do Registro: #{m.id}
+                        </Text>
+                      </View>
+                    )}
+                  </Surface>
+                </TouchableOpacity>
               );
             })
           )}
+
+          <View style={{ height: 40 }} />
         </ScrollView>
       )}
+
+      {/* ── MODAL DE FILTROS AVANÇADOS ─── */}
+      <Modal
+        visible={modalFiltrosAberto}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setModalFiltrosAberto(false)}
+      >
+        <View style={s.modalOverlay}>
+          <Surface style={s.modalContainer} elevation={4}>
+            <View style={s.modalHeader}>
+              <View>
+                <Text style={s.modalTitle}>Filtros Avançados</Text>
+                <Text style={s.modalSubtitle}>Refine por operador, depósito ou datas específicas</Text>
+              </View>
+              <TouchableOpacity onPress={() => setModalFiltrosAberto(false)} style={s.modalCloseBtn}>
+                <MaterialCommunityIcons name="close" size={22} color={C.slate700} />
+              </TouchableOpacity>
+            </View>
+
+            <Divider style={{ marginVertical: 12 }} />
+
+            <ScrollView showsVerticalScrollIndicator={false} style={{ maxHeight: 380 }}>
+              <Text style={s.inputLabel}>Operador / Usuário:</Text>
+              <TextInput
+                style={s.modalInput}
+                placeholder="Ex: Carlos, Ana..."
+                placeholderTextColor={C.slate500}
+                value={usuarioFiltro}
+                onChangeText={setUsuarioFiltro}
+              />
+
+              <Text style={s.inputLabel}>Depósito / Localização:</Text>
+              <TextInput
+                style={s.modalInput}
+                placeholder="Ex: Principal, Quarentena..."
+                placeholderTextColor={C.slate500}
+                value={depositoFiltro}
+                onChangeText={setDepositoFiltro}
+              />
+
+              <Text style={s.inputLabel}>Data Inicial (AAAA-MM-DD):</Text>
+              <TextInput
+                style={s.modalInput}
+                placeholder="Ex: 2026-08-01"
+                placeholderTextColor={C.slate500}
+                value={dataInicio}
+                onChangeText={setDataInicio}
+              />
+
+              <Text style={s.inputLabel}>Data Final (AAAA-MM-DD):</Text>
+              <TextInput
+                style={s.modalInput}
+                placeholder="Ex: 2026-08-31"
+                placeholderTextColor={C.slate500}
+                value={dataFim}
+                onChangeText={setDataFim}
+              />
+            </ScrollView>
+
+            <View style={s.modalActions}>
+              <Button mode="outlined" onPress={limparFiltrosModal} style={{ flex: 1 }}>
+                Limpar
+              </Button>
+              <Button
+                mode="contained"
+                onPress={aplicarFiltrosModal}
+                style={{ flex: 1, marginLeft: 10, backgroundColor: C.primaryColor }}
+              >
+                Aplicar
+              </Button>
+            </View>
+          </Surface>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -299,33 +538,139 @@ const s = StyleSheet.create({
     flex: 1,
     backgroundColor: C.bg,
   },
-
-  /* Header */
   header: {
     backgroundColor: C.headerBg,
-    paddingTop: Platform.OS === "android" ? 50 : 60,
-    paddingBottom: 20,
+    paddingTop: Platform.OS === "android" ? 45 : 55,
+    paddingBottom: 16,
     paddingHorizontal: 16,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
+  headerBtn: {
+    width: 40,
+    height: 40,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerCenter: {
+    flex: 1,
+    alignItems: "center",
+  },
   headerTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: "700",
     color: "#FFFFFF",
   },
-  headerLeftBtn: {
+  headerSubtitle: {
+    fontSize: 11,
+    color: "rgba(255, 255, 255, 0.8)",
+    marginTop: 1,
+  },
+
+  /* Barra Compacta Superior */
+  compactFilterBar: {
+    backgroundColor: C.white,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
+    gap: 8,
+  },
+  searchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  searchContainer: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: C.slate100,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    height: 40,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  searchIcon: {
+    marginRight: 6,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 13,
+    color: C.slate900,
+    paddingVertical: 4,
+  },
+  filterToggleBtn: {
     width: 40,
     height: 40,
+    borderRadius: 8,
+    backgroundColor: C.slate100,
+    borderWidth: 1,
+    borderColor: C.border,
     alignItems: "center",
     justifyContent: "center",
   },
-  headerRightBtn: {
-    width: 40,
-    height: 40,
-    alignItems: "center",
-    justifyContent: "center",
+  filterToggleBtnActive: {
+    backgroundColor: C.primaryColor,
+    borderColor: C.primaryColor,
+  },
+  filterCountBadge: {
+    position: "absolute",
+    top: -4,
+    right: -4,
+    backgroundColor: C.dangerColor,
+    fontSize: 10,
+  },
+
+  /* Pills */
+  pillsRow: {
+    flexDirection: "row",
+    gap: 6,
+    paddingVertical: 2,
+  },
+  pill: {
+    paddingVertical: 4,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    backgroundColor: C.slate100,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  pillActive: {
+    backgroundColor: C.primaryColor,
+    borderColor: C.primaryColor,
+  },
+  pillText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: C.slate700,
+  },
+  pillTextActive: {
+    color: "#FFFFFF",
+  },
+
+  pillSub: {
+    paddingVertical: 3,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  pillSubActive: {
+    backgroundColor: C.slate900,
+    borderColor: C.slate900,
+  },
+  pillSubText: {
+    fontSize: 11,
+    color: C.slate500,
+    fontWeight: "600",
+  },
+  pillSubTextActive: {
+    color: "#FFFFFF",
   },
 
   /* Scroll */
@@ -333,157 +678,104 @@ const s = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 32,
+    padding: 16,
   },
 
-  /* KPIs Scroll */
+  /* KPIs */
   kpiScroll: {
-    marginBottom: 16,
-    maxHeight: 70,
+    marginBottom: 14,
+    maxHeight: 65,
   },
   kpiScrollContent: {
-    gap: 10,
-    paddingRight: 16,
+    gap: 8,
   },
   kpiCard: {
-    width: 130,
+    width: 120,
     backgroundColor: C.white,
-    borderRadius: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderLeftWidth: 4,
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderLeftWidth: 3,
     justifyContent: "center",
   },
   kpiLabel: {
-    fontSize: 10,
-    color: C.textGray,
-    fontWeight: "600",
+    fontSize: 9,
+    color: C.slate500,
+    fontWeight: "700",
     textTransform: "uppercase",
-    marginBottom: 2,
   },
   kpiValue: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "800",
+    marginTop: 2,
   },
 
-  /* Busca */
-  searchContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: C.white,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    height: 46,
-    borderWidth: 1,
-    borderColor: C.border,
-    marginBottom: 12,
-  },
-  searchIcon: {
-    marginRight: 8,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 14,
-    color: C.textDark,
-    paddingVertical: 8,
-  },
-
-  /* Filtros */
-  filterRow: {
+  /* List Header */
+  listHeaderRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginBottom: 20,
-    gap: 6,
-  },
-  filterTab: {
-    flex: 1,
-    height: 34,
-    borderRadius: 17,
     alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#E5E7EB",
+    marginBottom: 10,
   },
-  filterTabActive: {
-    backgroundColor: C.primaryColor,
-  },
-  filterTabText: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: C.textGray,
-  },
-  filterTabTextActive: {
-    color: C.white,
-  },
-
-  /* Título da Lista */
   listTitle: {
     fontSize: 12,
-    fontWeight: "700",
-    color: C.textGray,
-    letterSpacing: 1,
-    marginBottom: 10,
-    marginLeft: 2,
+    fontWeight: "800",
+    color: C.slate700,
+    letterSpacing: 0.5,
   },
 
   /* Card Movimentação */
   card: {
     backgroundColor: C.white,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: C.border,
   },
   cardHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 10,
+    marginBottom: 6,
   },
   badge: {
-    paddingVertical: 4,
+    paddingVertical: 3,
     paddingHorizontal: 8,
     borderRadius: 6,
   },
   badgeText: {
     fontSize: 10,
-    fontWeight: "700",
+    fontWeight: "800",
+    letterSpacing: 0.5,
   },
   dateText: {
     fontSize: 11,
-    color: C.textGray,
+    color: C.slate500,
   },
   productName: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: C.textDark,
-    marginBottom: 2,
+    fontSize: 14,
+    fontWeight: "800",
+    color: C.slate900,
+  },
+  metaRow: {
+    flexDirection: "row",
+    gap: 6,
+    marginTop: 2,
   },
   productCode: {
     fontSize: 11,
-    color: C.textGray,
-    marginBottom: 4,
-    fontFamily: Platform.OS === "ios" ? "Courier" : "monospace",
-  },
-  loteRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    marginTop: 2,
+    color: C.slate500,
   },
   loteText: {
-    fontSize: 12,
-    color: C.textGray,
-    fontWeight: "500",
-  },
-  divider: {
-    height: 1,
-    backgroundColor: "#F3F4F6",
-    marginVertical: 12,
+    fontSize: 11,
+    color: C.slate500,
+    fontWeight: "600",
   },
   footerRow: {
     flexDirection: "row",
     justifyContent: "space-between",
+    alignItems: "center",
   },
   userCol: {
     flex: 1,
@@ -492,16 +784,15 @@ const s = StyleSheet.create({
     alignItems: "flex-end",
   },
   footerLabel: {
-    fontSize: 9,
-    color: C.textGray,
+    fontSize: 10,
+    color: C.slate500,
     fontWeight: "600",
-    textTransform: "uppercase",
-    marginBottom: 2,
   },
   footerValue: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: C.textDark,
+    fontSize: 12,
+    fontWeight: "700",
+    color: C.slate700,
+    marginTop: 1,
   },
   quantityText: {
     fontSize: 14,
@@ -511,45 +802,107 @@ const s = StyleSheet.create({
     textDecorationLine: "line-through",
   },
 
-  /* States */
+  expandedBox: {
+    marginTop: 4,
+    gap: 2,
+  },
+  expandedText: {
+    fontSize: 11,
+    color: C.slate700,
+  },
+
+  /* Empty State */
+  emptyContainer: {
+    backgroundColor: C.white,
+    borderRadius: 12,
+    padding: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  emptyTitle: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: C.slate900,
+    marginTop: 8,
+  },
+  emptySub: {
+    fontSize: 12,
+    color: C.slate500,
+    textAlign: "center",
+    marginTop: 4,
+  },
+
   centerContainer: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
-    backgroundColor: C.bg,
   },
   loadingText: {
     marginTop: 12,
-    fontSize: 14,
-    color: C.textGray,
+    fontSize: 13,
+    color: C.slate500,
+    fontWeight: "600",
   },
   errorText: {
-    marginTop: 12,
-    fontSize: 14,
-    color: C.textGray,
-    textAlign: "center",
-    marginBottom: 20,
-  },
-  retryBtn: {
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    backgroundColor: C.primaryColor,
-    borderRadius: 8,
-  },
-  retryText: {
-    color: C.white,
-    fontWeight: "600",
-    fontSize: 14,
-  },
-  emptyContainer: {
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 40,
-    gap: 8,
-  },
-  emptyText: {
     fontSize: 13,
-    color: C.textGray,
+    color: C.dangerColor,
+    textAlign: "center",
+    marginTop: 8,
+  },
+
+  /* Modal de Filtros */
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "flex-end",
+  },
+  modalContainer: {
+    backgroundColor: C.white,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    padding: 20,
+    maxHeight: "80%",
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: C.slate900,
+  },
+  modalSubtitle: {
+    fontSize: 11,
+    color: C.slate500,
+    marginTop: 2,
+  },
+  modalCloseBtn: {
+    padding: 4,
+  },
+  inputLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: C.slate700,
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  modalInput: {
+    backgroundColor: C.slate100,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    height: 42,
+    borderWidth: 1,
+    borderColor: C.border,
+    fontSize: 13,
+    color: C.slate900,
+  },
+  modalActions: {
+    flexDirection: "row",
+    marginTop: 16,
   },
 });

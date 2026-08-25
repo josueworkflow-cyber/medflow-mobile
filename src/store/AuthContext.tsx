@@ -79,16 +79,16 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     bootstrapAsync();
   }, []);
 
-  const signIn = async (token: string, user: Usuario) => {
+  const signIn = React.useCallback(async (token: string, user: Usuario) => {
     await Storage.saveToken(token);
     await Storage.saveUser(user);
     dispatch({ type: "SIGN_IN", payload: { token, user } });
-  };
+  }, []);
 
-  const signOut = async () => {
+  const signOut = React.useCallback(async () => {
     await Storage.clearAll();
     dispatch({ type: "SIGN_OUT" });
-  };
+  }, []);
 
   return (
     <AuthContext.Provider value={{ state, signIn, signOut }}>
@@ -96,3 +96,4 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     </AuthContext.Provider>
   );
 };
+

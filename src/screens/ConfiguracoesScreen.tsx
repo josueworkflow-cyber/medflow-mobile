@@ -177,7 +177,7 @@ export const ConfiguracoesScreen = () => {
             <Text style={s.logoutText}>Sair da conta</Text>
           </TouchableOpacity>
 
-          <Text style={s.footer}>© 2026 MedFlow Systems</Text>
+          <Text style={s.footer}>© 2026 MedFlow ERP Systems</Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </View>

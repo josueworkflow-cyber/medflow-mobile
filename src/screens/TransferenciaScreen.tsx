@@ -1,16 +1,37 @@
-import React, { useState } from "react";
-import { StyleSheet, View, ScrollView, Alert, KeyboardAvoidingView, Platform } from "react-native";
-import { Button, Text, TextInput, HelperText, Card } from "react-native-paper";
+import React, { useEffect, useState } from "react";
+import { StyleSheet, View, ScrollView, Alert, KeyboardAvoidingView, Platform, TouchableOpacity } from "react-native";
+import { Button, Text, TextInput, HelperText, Card, Menu, Surface, Divider } from "react-native-paper";
 import { useRoute, useNavigation, RouteProp } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../types/navigation";
-import { EstoqueAPI } from "../api/estoque";
+import { EstoqueAPI, TransferenciaPayload } from "../api/estoque";
+import { EstoqueConsultaAPI, LoteResumo } from "../api/estoque-consulta";
+import { ProdutosAPI } from "../api/produtos";
+import { Produto, Lote, SaldoLote } from "../types/produto";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { z } from "zod";
 
 type RoutePropType = RouteProp<RootStackParamList, "Transferencia">;
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, "Transferencia">;
 
-// Schema de validação local Zod com refine para validar se destino é diferente de origem
+const C = {
+  headerBg: "#8B0C21",
+  bg: "#F8FAFC",
+  white: "#FFFFFF",
+  slate100: "#F1F5F9",
+  slate200: "#E2E8F0",
+  slate500: "#64748B",
+  slate700: "#334155",
+  slate900: "#0F172A",
+  border: "#E2E8F0",
+
+  primaryColor: "#C41230",
+  successColor: "#16A34A",
+  warningColor: "#D97706",
+  dangerColor: "#DC2626",
+  infoColor: "#2563EB",
+};
+
 const transferenciaSchema = z
   .object({
     localizacaoOrigemId: z.coerce
@@ -22,10 +43,10 @@ const transferenciaSchema = z
     quantidade: z.coerce
       .number({ invalid_type_error: "A quantidade deve ser um número válido." })
       .positive("A quantidade deve ser maior que zero."),
-    motivo: z.string().min(1, "O motivo da transferência é obrigatório."),
+    motivo: z.string().min(3, "O motivo da transferência deve conter no mínimo 3 caracteres."),
   })
   .refine((data) => data.localizacaoOrigemId !== data.localizacaoDestinoId, {
-    message: "Origem e destino não podem ser iguais.",
+    message: "O depósito de destino deve ser diferente do de origem.",
     path: ["localizacaoDestinoId"],
   });
 
@@ -33,35 +54,101 @@ export const TransferenciaScreen = () => {
   const route = useRoute<RoutePropType>();
   const navigation = useNavigation<NavigationProp>();
 
-  const produto = route.params?.produto;
-  const lote = route.params?.lote;
+  const [produto, setProduto] = useState<Produto | undefined>(route.params?.produto);
+  const [lote, setLote] = useState<Lote | undefined>(route.params?.lote);
+  const [saldo, setSaldo] = useState<SaldoLote | undefined>(route.params?.saldo);
 
-  if (!produto || !lote) {
-    return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", padding: 24, gap: 16 }}>
-        <Text style={{ textAlign: "center" }}>Produto ou lote não selecionado ou parâmetros inválidos.</Text>
-        <Button mode="contained" onPress={() => navigation.goBack()}>
-          Voltar
-        </Button>
-      </View>
-    );
-  }
+  // Busca caso a tela seja aberta diretamente
+  const [buscaLote, setBuscaLote] = useState("");
+  const [lotesEncontrados, setLotesEncontrados] = useState<LoteResumo[]>([]);
+  const [loadingBusca, setLoadingBusca] = useState(false);
 
-  // Estados do Formulário
-  const [localizacaoOrigemId, setLocalizacaoOrigemId] = useState("");
-  const [localizacaoDestinoId, setLocalizacaoDestinoId] = useState("");
+  // Formulário
+  const [localizacaoOrigemId, setLocalizacaoOrigemId] = useState<string>(String(saldo?.localizacao?.id || ""));
+  const [localizacaoDestinoId, setLocalizacaoDestinoId] = useState<string>("");
   const [quantidade, setQuantidade] = useState("");
   const [motivo, setMotivo] = useState("");
 
   const [isLoading, setIsLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [localizacoes, setLocalizacoes] = useState<{ id: number; nome: string }[]>([]);
+  const [menuDestino, setMenuDestino] = useState(false);
+  const [menuOrigem, setMenuOrigem] = useState(false);
 
-  // Calcula a quantidade total disponível do lote para exibição
-  const totalQtd = lote.estoqueAtual.reduce(
-    (acc, curr) => acc + curr.quantidadeDisponivel, 0
-  );
+  useEffect(() => {
+    EstoqueAPI.localizacoes()
+      .then(setLocalizacoes)
+      .catch(() => Alert.alert("Erro", "Não foi possível carregar os depósitos."));
+  }, []);
+
+  const buscarLotes = async () => {
+    if (buscaLote.trim().length < 2) {
+      return Alert.alert("Busca", "Digite pelo menos 2 caracteres para pesquisar.");
+    }
+    setLoadingBusca(true);
+    try {
+      const res = await EstoqueConsultaAPI.getLotes({ search: buscaLote.trim() });
+      setLotesEncontrados((res || []).slice(0, 10));
+      if (!res || res.length === 0) {
+        Alert.alert("Busca de Lotes", "Nenhum lote com saldo encontrado.");
+      }
+    } catch {
+      Alert.alert("Erro", "Não foi possível pesquisar lotes.");
+    } finally {
+      setLoadingBusca(false);
+    }
+  };
+
+  const selecionarLoteResumo = async (item: LoteResumo) => {
+    setLoadingBusca(true);
+    try {
+      const prodDetalhe = await ProdutosAPI.buscarPorId(item.produtoId);
+      setProduto(prodDetalhe || {
+        id: item.produtoId,
+        nome: item.produto.descricao,
+        codigoInterno: null,
+        codigoBarras: null,
+        unidade: "UN",
+      });
+
+      const loteEncontrado = {
+        id: item.id,
+        numeroLote: item.numeroLote,
+        validade: item.validade,
+        status: item.status as any,
+        estoqueAtual: (item.estoqueAtual as any) || [],
+      };
+      setLote(loteEncontrado);
+
+      // Localiza o saldo ou usa o primeiro disponível
+      const saldoEncontrado = loteEncontrado.estoqueAtual[0] || {
+        id: 0,
+        quantidadeDisponivel: 0,
+        quantidadeReservada: 0,
+        quantidadeBloqueada: 0,
+        status: "DISPONIVEL",
+        localizacao: null,
+      };
+      setSaldo(saldoEncontrado);
+      if (saldoEncontrado.localizacao?.id) {
+        setLocalizacaoOrigemId(String(saldoEncontrado.localizacao.id));
+      }
+      setLotesEncontrados([]);
+    } catch {
+      Alert.alert("Erro", "Erro ao carregar detalhes do lote.");
+    } finally {
+      setLoadingBusca(false);
+    }
+  };
+
+  const maxDisponivel = saldo?.quantidadeDisponivel ?? 0;
 
   const handleSubmeter = async () => {
+    if (!produto) {
+      Alert.alert("Aviso", "Selecione o produto e lote a transferir.");
+      return;
+    }
+
     const payloadFields = {
       localizacaoOrigemId,
       localizacaoDestinoId,
@@ -70,7 +157,7 @@ export const TransferenciaScreen = () => {
     };
 
     const resultado = transferenciaSchema.safeParse(payloadFields);
-    
+
     if (!resultado.success) {
       const formattedErrors: Record<string, string> = {};
       resultado.error.errors.forEach((err) => {
@@ -82,13 +169,18 @@ export const TransferenciaScreen = () => {
       return;
     }
 
+    if (resultado.data.quantidade > maxDisponivel && maxDisponivel > 0) {
+      setErrors({ quantidade: `A quantidade máxima disponível para transferência é ${maxDisponivel} ${produto.unidade}.` });
+      return;
+    }
+
     setErrors({});
     setIsLoading(true);
 
     try {
-      // Monta o payload final usando o dado validado e limpo pelo Zod (loteId, localizacaoOrigemId, localizacaoDestinoId, quantidade, motivo)
-      const payload = {
-        loteId: lote.id,
+      const payload: TransferenciaPayload = {
+        produtoId: produto.id,
+        loteId: lote?.id ?? null,
         localizacaoOrigemId: resultado.data.localizacaoOrigemId,
         localizacaoDestinoId: resultado.data.localizacaoDestinoId,
         quantidade: resultado.data.quantidade,
@@ -97,97 +189,170 @@ export const TransferenciaScreen = () => {
 
       await EstoqueAPI.transferir(payload);
 
-      Alert.alert("Sucesso", "Transferência de lote concluída com sucesso!", [
-        { text: "OK", onPress: () => navigation.goBack() }
-      ]);
+      const origemNome = localizacoes.find((l) => l.id === resultado.data.localizacaoOrigemId)?.nome || "Origem";
+      const destinoNome = localizacoes.find((l) => l.id === resultado.data.localizacaoDestinoId)?.nome || "Destino";
+
+      Alert.alert(
+        "Transferência Concluída",
+        `Transferência de ${resultado.data.quantidade} ${produto.unidade} de [${origemNome}] para [${destinoNome}] realizada com sucesso!`,
+        [{ text: "OK", onPress: () => navigation.goBack() }]
+      );
     } catch (err: any) {
       console.error(err);
-      // Tratamento específico de retorno de erro da API (como "Quantidade insuficiente no estoque de origem.")
-      const apiError = err.response?.data?.error || "Ocorreu um erro ao processar a transferência de lote.";
-      Alert.alert("Erro de Transferência", apiError);
+      Alert.alert("Erro na Transferência", err.response?.data?.error || "Ocorreu um erro ao realizar a transferência.");
     } finally {
       setIsLoading(false);
     }
   };
 
+  const origemNome = localizacoes.find((l) => String(l.id) === localizacaoOrigemId)?.nome || "Selecione o Depósito de Origem *";
+  const destinoNome = localizacoes.find((l) => String(l.id) === localizacaoDestinoId)?.nome || "Selecione o Depósito de Destino *";
+
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      style={styles.container}
-    >
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.header}>
-          <Text variant="headlineSmall" style={styles.title}>
-            Transferir Lote
-          </Text>
-          <Text variant="bodyMedium" style={styles.subtitle}>
-            {produto.nome} ({produto.unidade})
-          </Text>
-          <Text variant="bodySmall" style={styles.loteInfo}>
-            Lote: {lote.codigo} | Saldo Disponível: {totalQtd} {produto.unidade}
-          </Text>
+    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={s.container}>
+      <View style={s.header}>
+        <TouchableOpacity style={s.headerBtn} onPress={() => navigation.goBack()}>
+          <MaterialCommunityIcons name="chevron-left" size={28} color="#FFFFFF" />
+        </TouchableOpacity>
+        <View style={s.headerCenter}>
+          <Text style={s.headerTitle}>Transferir Lote</Text>
+          <Text style={s.headerSubtitle}>Movimentação Física entre Depósitos</Text>
         </View>
+        <View style={{ width: 40 }} />
+      </View>
 
-        <Card style={styles.card} mode="outlined">
-          <Card.Content>
-            {/* Campo Localização Origem */}
-            <TextInput
-              label="ID Localização Origem *"
-              value={localizacaoOrigemId}
-              onChangeText={(text) => {
-                setLocalizacaoOrigemId(text);
-                if (errors.localizacaoOrigemId) setErrors((prev) => ({ ...prev, localizacaoOrigemId: "" }));
-              }}
-              mode="outlined"
-              keyboardType="numeric"
-              disabled={isLoading}
-              style={styles.input}
-            />
-            {errors.localizacaoOrigemId && (
-              <HelperText type="error" visible={true}>
-                {errors.localizacaoOrigemId}
-              </HelperText>
+      <ScrollView contentContainerStyle={s.scrollContent} showsVerticalScrollIndicator={false}>
+        {!produto || !saldo ? (
+          <Surface style={s.card} elevation={1}>
+            <Text style={s.cardTitle}>Selecione o Lote / Saldo para Transferência</Text>
+            <Text style={s.cardSub}>Pesquise pelo número do lote ou nome do produto:</Text>
+
+            <View style={s.searchRow}>
+              <TextInput
+                mode="outlined"
+                placeholder="Número do lote ou produto..."
+                value={buscaLote}
+                onChangeText={setBuscaLote}
+                style={{ flex: 1, backgroundColor: C.white }}
+              />
+              <Button mode="contained" onPress={buscarLotes} loading={loadingBusca} style={s.btnPrimary}>
+                Buscar
+              </Button>
+            </View>
+
+            <Button
+              mode="contained-tonal"
+              icon="barcode-scan"
+              onPress={() => navigation.navigate("Scanner", { action: "Transferencia" })}
+              style={{ marginTop: 10 }}
+            >
+              Escanear Código de Barras / DataMatrix
+            </Button>
+
+            {lotesEncontrados.length > 0 && (
+              <Text style={[s.cardTitle, { fontSize: 13, marginTop: 16 }]}>
+                LOTES ENCONTRADOS ({lotesEncontrados.length}):
+              </Text>
             )}
 
-            {/* Campo Localização Destino */}
-            <TextInput
-              label="ID Localização Destino *"
-              value={localizacaoDestinoId}
-              onChangeText={(text) => {
-                setLocalizacaoDestinoId(text);
-                if (errors.localizacaoDestinoId) setErrors((prev) => ({ ...prev, localizacaoDestinoId: "" }));
-              }}
-              mode="outlined"
-              keyboardType="numeric"
-              disabled={isLoading}
-              style={styles.input}
-            />
-            {errors.localizacaoDestinoId && (
-              <HelperText type="error" visible={true}>
-                {errors.localizacaoDestinoId}
-              </HelperText>
-            )}
+            {lotesEncontrados.map((item) => (
+              <TouchableOpacity
+                key={item.id}
+                style={s.loteSelectCard}
+                onPress={() => selecionarLoteResumo(item)}
+              >
+                <MaterialCommunityIcons name="archive-arrow-down-outline" size={24} color={C.successColor} />
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={s.loteSelectTitle}>Lote: {item.numeroLote}</Text>
+                  <Text style={s.loteSelectSub}>{item.produto.descricao}</Text>
+                  <Text style={s.loteSelectSub}>
+                    Validade: {item.validade ? new Date(item.validade).toLocaleDateString("pt-BR") : "N/A"}
+                  </Text>
+                </View>
+                <MaterialCommunityIcons name="chevron-right" size={20} color={C.slate500} />
+              </TouchableOpacity>
+            ))}
+          </Surface>
+        ) : (
+          <Surface style={s.card} elevation={1}>
+            <View style={s.selectedBox}>
+              <View style={{ flex: 1 }}>
+                <Text style={s.selectedTitle}>{produto.nome}</Text>
+                <Text style={s.selectedSub}>
+                  {lote ? `Lote: ${lote.numeroLote}` : "Produto sem lote"} • Saldo Disp.: <Text style={{ fontWeight: "800", color: C.successColor }}>{maxDisponivel} {produto.unidade}</Text>
+                </Text>
+              </View>
+              <Button mode="text" compact onPress={() => setSaldo(undefined)} textColor={C.dangerColor}>
+                Trocar
+              </Button>
+            </View>
 
-            {/* Campo Quantidade a Transferir */}
+            <Divider style={{ marginVertical: 14 }} />
+
+            {/* Origem */}
+            <Text style={s.fieldLabel}>Depósito de Origem:</Text>
+            <Menu
+              visible={menuOrigem}
+              onDismiss={() => setMenuOrigem(false)}
+              anchor={
+                <Button mode="outlined" onPress={() => setMenuOrigem(true)} style={s.menuBtn}>
+                  {origemNome}
+                </Button>
+              }
+            >
+              {localizacoes.map((l) => (
+                <Menu.Item
+                  key={l.id}
+                  title={l.nome}
+                  onPress={() => {
+                    setLocalizacaoOrigemId(String(l.id));
+                    setMenuOrigem(false);
+                  }}
+                />
+              ))}
+            </Menu>
+            {errors.localizacaoOrigemId && <HelperText type="error">{errors.localizacaoOrigemId}</HelperText>}
+
+            {/* Destino */}
+            <Text style={s.fieldLabel}>Depósito de Destino:</Text>
+            <Menu
+              visible={menuDestino}
+              onDismiss={() => setMenuDestino(false)}
+              anchor={
+                <Button mode="outlined" onPress={() => setMenuDestino(true)} style={s.menuBtn}>
+                  {destinoNome}
+                </Button>
+              }
+            >
+              {localizacoes.map((l) => (
+                <Menu.Item
+                  key={l.id}
+                  title={l.nome}
+                  onPress={() => {
+                    setLocalizacaoDestinoId(String(l.id));
+                    setMenuDestino(false);
+                  }}
+                />
+              ))}
+            </Menu>
+            {errors.localizacaoDestinoId && <HelperText type="error">{errors.localizacaoDestinoId}</HelperText>}
+
+            {/* Quantidade */}
             <TextInput
-              label="Quantidade a Transferir *"
+              label={`Quantidade a Transferir (${produto.unidade}) *`}
               value={quantidade}
               onChangeText={(text) => {
                 setQuantidade(text);
                 if (errors.quantidade) setErrors((prev) => ({ ...prev, quantidade: "" }));
               }}
               mode="outlined"
-              keyboardType="numeric"
-              disabled={isLoading}
-              style={styles.input}
+              keyboardType="decimal-pad"
+              placeholder={`Máx: ${maxDisponivel}`}
+              style={s.input}
             />
-            {errors.quantidade && (
-              <HelperText type="error" visible={true}>
-                {errors.quantidade}
-              </HelperText>
-            )}
+            {errors.quantidade && <HelperText type="error">{errors.quantidade}</HelperText>}
 
-            {/* Campo Motivo */}
+            {/* Motivo */}
             <TextInput
               label="Motivo da Transferência *"
               value={motivo}
@@ -196,26 +361,15 @@ export const TransferenciaScreen = () => {
                 if (errors.motivo) setErrors((prev) => ({ ...prev, motivo: "" }));
               }}
               mode="outlined"
-              multiline={true}
-              numberOfLines={3}
-              placeholder="Ex: Mudança de corredor para otimização ou câmara fria."
-              disabled={isLoading}
-              style={styles.input}
+              multiline
+              numberOfLines={2}
+              placeholder="Ex: Reorganização de prateleira ou abastecimento do picking."
+              style={s.input}
             />
-            {errors.motivo && (
-              <HelperText type="error" visible={true}>
-                {errors.motivo}
-              </HelperText>
-            )}
+            {errors.motivo && <HelperText type="error">{errors.motivo}</HelperText>}
 
-            {/* Botões de Ação */}
-            <View style={styles.btnRow}>
-              <Button
-                mode="outlined"
-                onPress={() => navigation.goBack()}
-                disabled={isLoading}
-                style={styles.btnAction}
-              >
+            <View style={s.btnRow}>
+              <Button mode="outlined" onPress={() => navigation.goBack()} disabled={isLoading} style={{ flex: 1 }}>
                 Cancelar
               </Button>
               <Button
@@ -223,58 +377,56 @@ export const TransferenciaScreen = () => {
                 onPress={handleSubmeter}
                 loading={isLoading}
                 disabled={isLoading}
-                style={[styles.btnAction, { marginLeft: 12 }]}
+                style={[s.btnPrimary, { flex: 1, marginLeft: 10 }]}
               >
-                Transferir
+                Confirmar Transferência
               </Button>
             </View>
-          </Card.Content>
-        </Card>
+          </Surface>
+        )}
       </ScrollView>
     </KeyboardAvoidingView>
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#f5f5f5",
-  },
-  scrollContent: {
-    flexGrow: 1,
-    padding: 16,
-  },
+const s = StyleSheet.create({
+  container: { flex: 1, backgroundColor: C.bg },
   header: {
-    marginBottom: 20,
-    marginTop: Platform.OS === "ios" ? 40 : 10,
-  },
-  title: {
-    fontWeight: "bold",
-    color: "#2C3E50",
-  },
-  subtitle: {
-    color: "#7F8C8D",
-    marginTop: 4,
-  },
-  loteInfo: {
-    color: "#34495E",
-    fontWeight: "600",
-    marginTop: 4,
-  },
-  card: {
-    backgroundColor: "#ffffff",
-    borderRadius: 12,
-  },
-  input: {
-    marginBottom: 8,
-  },
-  btnRow: {
+    backgroundColor: C.headerBg,
+    paddingTop: Platform.OS === "android" ? 45 : 55,
+    paddingBottom: 16,
+    paddingHorizontal: 16,
     flexDirection: "row",
+    alignItems: "center",
     justifyContent: "space-between",
-    marginTop: 16,
   },
-  btnAction: {
-    flex: 1,
+  headerBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
+  headerCenter: { flex: 1, alignItems: "center" },
+  headerTitle: { fontSize: 17, fontWeight: "700", color: "#FFFFFF" },
+  headerSubtitle: { fontSize: 11, color: "rgba(255, 255, 255, 0.8)", marginTop: 1 },
+  scrollContent: { padding: 16 },
+  card: { backgroundColor: C.white, borderRadius: 12, padding: 16, borderWidth: 1, borderColor: C.border },
+  cardTitle: { fontSize: 16, fontWeight: "800", color: C.slate900 },
+  cardSub: { fontSize: 12, color: C.slate500, marginTop: 4, marginBottom: 14 },
+  searchRow: { flexDirection: "row", gap: 8, alignItems: "center" },
+  btnPrimary: { backgroundColor: C.primaryColor, borderRadius: 8 },
+  loteSelectCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 12,
     borderRadius: 8,
+    borderWidth: 1,
+    borderColor: C.border,
+    backgroundColor: C.slate100,
+    marginTop: 8,
   },
+  loteSelectTitle: { fontSize: 14, fontWeight: "800", color: C.slate900 },
+  loteSelectSub: { fontSize: 11, color: C.slate500, marginTop: 1 },
+  selectedBox: { flexDirection: "row", alignItems: "center", backgroundColor: C.slate100, padding: 12, borderRadius: 8 },
+  selectedTitle: { fontSize: 15, fontWeight: "800", color: C.slate900 },
+  selectedSub: { fontSize: 12, color: C.slate500, marginTop: 2 },
+  fieldLabel: { fontSize: 12, fontWeight: "700", color: C.slate700, marginTop: 6 },
+  menuBtn: { marginVertical: 4, borderRadius: 8 },
+  input: { marginVertical: 6, backgroundColor: C.white },
+  btnRow: { flexDirection: "row", marginTop: 16 },
 });

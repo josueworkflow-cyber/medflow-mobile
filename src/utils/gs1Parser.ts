@@ -19,14 +19,8 @@ function formatGS1Date(dateStr: string): string {
   return dateStr;
 }
 
-/**
- * Remove o primeiro zero de um GTIN de 14 dígitos para obter o EAN-13 padrão
- */
 function cleanGtin(gtin: string): string {
-  if (gtin.length === 14 && gtin.startsWith("0")) {
-    return gtin.substring(1);
-  }
-  return gtin;
+  return gtin.trim().replace(/[\x00-\x1F\x7F-\x9F]/g, "");
 }
 
 /**
@@ -35,6 +29,7 @@ function cleanGtin(gtin: string): string {
  */
 export function parseGS1(rawCode: string): ParsedGS1 {
   let cleanCode = rawCode.trim();
+  const hasGs1SymbologyIdentifier = /^\](?:d2|C1)/i.test(cleanCode);
 
   // 0. Limpeza de prefixos de simbologia de leitor e caracteres de controle do início da string
   // Remove prefixos ISO/IEC 15424 comuns, como ]d2 (DataMatrix) ou ]C1 (GS1-128)
@@ -75,9 +70,21 @@ export function parseGS1(rawCode: string): ParsedGS1 {
 
   // 2. Padrão colado sem parênteses (comum em DataMatrix de câmera)
   // Geralmente inicia com "01" e tem o GTIN de 14 dígitos em seguida
-  if (cleanCode.startsWith("01") && cleanCode.length >= 16) {
-    const gtin = cleanCode.substring(2, 16);
-    let rest = cleanCode.substring(16);
+  const gs1WithoutParentheses = cleanCode.match(/^01(\d{14})([\s\S]*)$/);
+  const gs1Remainder = gs1WithoutParentheses?.[2] ?? "";
+  const looksLikeGs1 = Boolean(
+    gs1WithoutParentheses &&
+    (
+      hasGs1SymbologyIdentifier ||
+      gs1Remainder.length === 0 ||
+      gs1Remainder.startsWith("\x1d") ||
+      /^(?:10|11|13|15|17|21|30|37)/.test(gs1Remainder)
+    )
+  );
+
+  if (gs1WithoutParentheses && looksLikeGs1) {
+    const gtin = gs1WithoutParentheses[1];
+    let rest = gs1Remainder;
     let lote = "";
     let validade = "";
 

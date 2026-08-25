@@ -1,6 +1,16 @@
-import React, { useState } from "react";
-import { StyleSheet, View, Alert, KeyboardAvoidingView, Platform, ScrollView } from "react-native";
-import { Button, Text, ActivityIndicator, TextInput, List, Surface, IconButton, useTheme } from "react-native-paper";
+import React, { useRef, useState } from "react";
+import {
+  StyleSheet,
+  View,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  TouchableOpacity,
+  StatusBar,
+  Vibration,
+} from "react-native";
+import { Button, Text, ActivityIndicator, TextInput, List, Surface, useTheme } from "react-native-paper";
 import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { CameraView, useCameraPermissions } from "expo-camera";
@@ -8,9 +18,26 @@ import { ProdutosAPI } from "../api/produtos";
 import { RootStackParamList } from "../types/navigation";
 import { Produto } from "../types/produto";
 import { parseGS1 } from "../utils/gs1Parser";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 
 type RoutePropType = RouteProp<RootStackParamList, "Scanner">;
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, "Scanner">;
+
+const C = {
+  headerBg: "#8B0C21",
+  bg: "#F0F2F5",
+  white: "#FFFFFF",
+  textDark: "#1E293B",
+  textGray: "#6B7280",
+  chevron: "#C5CAD0",
+  border: "#E5E7EB",
+
+  primaryColor: "#C41230",
+  successColor: "#22A85A",
+  warningColor: "#F97316",
+  dangerColor: "#EF4444",
+  infoColor: "#3B82F6",
+};
 
 export const ScannerScreen = () => {
   const route = useRoute<RoutePropType>();
@@ -19,61 +46,65 @@ export const ScannerScreen = () => {
   const theme = useTheme();
   
   const [permission, requestPermission] = useCameraPermissions();
+  const [scanMode, setScanMode] = useState<"camera" | "manual">("camera");
+  const [isTorchOn, setIsTorchOn] = useState(false);
   const [scanned, setScanned] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [lastScannedCode, setLastScannedCode] = useState<string | null>(null);
+  const scanLockRef = useRef(false);
   
-  // Estados para busca manual fallback
-  const [showManualSearch, setShowManualSearch] = useState(false);
+  // Estados para busca manual
   const [searchQuery, setSearchQuery] = useState("");
   const [manualResults, setManualResults] = useState<Produto[]>([]);
 
-  if (!permission) {
-    // Permissão da câmera ainda carregando
-    return (
-      <View style={styles.centerContainer}>
-        <ActivityIndicator size="large" />
-        <Text style={styles.loadingText} variant="bodyMedium">
-          Carregando permissões...
-        </Text>
-      </View>
-    );
-  }
-
-  if (!permission.granted) {
-    // Permissão não concedida
-    return (
-      <View style={styles.centerContainer}>
-        <Text style={styles.permissionTitle} variant="titleLarge">
-          Acesso à Câmera Necessário
-        </Text>
-        <Text style={styles.permissionText} variant="bodyMedium">
-          Precisamos de acesso à câmera do celular para ler os códigos de barras dos produtos hospitalares.
-        </Text>
-        <Button mode="contained" onPress={requestPermission} style={styles.button}>
-          Conceder Permissão
-        </Button>
-        <Button mode="outlined" onPress={() => navigation.goBack()} style={styles.backButton}>
-          Voltar
-        </Button>
-      </View>
-    );
-  }
+  // Lida com a alternância de modo
+  const changeMode = (mode: "camera" | "manual") => {
+    scanLockRef.current = false;
+    setIsTorchOn(false);
+    setScanMode(mode);
+    if (mode === "camera") {
+      setScanned(false);
+      setErrorMessage(null);
+      setLastScannedCode(null);
+      setSearchQuery("");
+      setManualResults([]);
+    } else {
+      setScanned(false);
+      if (lastScannedCode && !searchQuery) setSearchQuery(lastScannedCode);
+    }
+  };
 
   const handleBarcodeScanned = async ({ data }: { data: string }) => {
+    if (scanLockRef.current) return;
+
+    const codigoLido = data.trim();
+    if (!codigoLido) return;
+
+    // A CameraView pode disparar o mesmo evento mais de uma vez antes do
+    // React desmontar a câmera. O bloqueio síncrono evita buscas concorrentes.
+    scanLockRef.current = true;
+    try {
+      Vibration.vibrate(80);
+    } catch {
+      // ignore
+    }
+    setLastScannedCode(codigoLido);
     setScanned(true);
-    await buscarProdutoPorCodigo(data);
+    await buscarProdutoPorCodigo(codigoLido);
   };
 
   const buscarProdutoPorCodigo = async (codigo: string) => {
     setIsLoading(true);
     setErrorMessage(null);
-    setShowManualSearch(false);
     
     try {
       const parsed = parseGS1(codigo);
-      const produto = await ProdutosAPI.buscarPorCodigoBarras(parsed.gtin);
-      if (produto) {
+      // O backend é a fonte única de normalização. Enviar a leitura bruta
+      // também preserva prefixos GS1 e códigos de embalagem para diagnóstico.
+      const { produtos, inativos } = await ProdutosAPI.buscarPorCodigoBarras(codigo);
+      if (produtos.length === 1) {
+        const produto = produtos[0];
         if (action === "EntradaEstoque") {
           navigation.navigate("EntradaEstoque", { 
             produto, 
@@ -94,14 +125,21 @@ export const ScannerScreen = () => {
             validadeSugerida: parsed.validade 
           });
         }
+      } else if (produtos.length > 1) {
+        setSearchQuery(parsed.raw);
+        setManualResults(produtos);
+        setScanMode("manual");
+        setErrorMessage("Mais de um produto ativo usa este código. Selecione o produto correto.");
       } else {
-        setErrorMessage(`Produto com código "${parsed.gtin}" não encontrado.`);
-        setShowManualSearch(true);
+        setErrorMessage(
+          inativos > 0
+            ? `Este código pertence a ${inativos === 1 ? "um produto inativo" : `${inativos} produtos inativos`}. Reative o cadastro no ERP antes de movimentar o estoque.`
+            : `Produto com código "${parsed.gtin}" não encontrado.`
+        );
       }
     } catch (err: any) {
       console.error(err);
       setErrorMessage("Erro de rede ou servidor inacessível ao buscar o produto.");
-      setShowManualSearch(true);
     } finally {
       setIsLoading(false);
     }
@@ -131,9 +169,10 @@ export const ScannerScreen = () => {
   };
 
   const resetScanner = () => {
+    scanLockRef.current = false;
     setScanned(false);
     setErrorMessage(null);
-    setShowManualSearch(false);
+    setLastScannedCode(null);
     setSearchQuery("");
     setManualResults([]);
   };
@@ -143,60 +182,130 @@ export const ScannerScreen = () => {
       behavior={Platform.OS === "ios" ? "padding" : "height"}
       style={styles.container}
     >
+      <StatusBar barStyle="light-content" backgroundColor={C.headerBg} />
+
+      {/* ── Header Corporativo ─── */}
       <View style={styles.header}>
-        <IconButton icon="arrow-left" onPress={() => navigation.goBack()} />
+        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
+          <MaterialCommunityIcons name="chevron-left" size={28} color="#FFFFFF" />
+        </TouchableOpacity>
         <Text style={styles.headerTitle} variant="titleLarge">
           Escanear Produto
         </Text>
+        <View style={{ width: 28 }} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* Componente da Câmera */}
-        {!scanned ? (
-          <View style={styles.cameraWrapper}>
-            <CameraView
-              style={styles.camera}
-              facing="back"
-              onBarcodeScanned={handleBarcodeScanned}
-              barcodeScannerSettings={{
-                barcodeTypes: ["ean13", "ean8", "qr"],
-              }}
-            />
-            <View style={styles.overlayScanner}>
-              <View style={styles.scanTarget} />
-            </View>
-          </View>
-        ) : (
-          <Surface style={styles.scannedBanner} elevation={1}>
-            <IconButton icon="barcode" size={48} iconColor={theme.colors.primary} />
-            <Text variant="titleMedium" style={styles.scannedTitle}>
-              Código Escaneado!
-            </Text>
-            <Button mode="contained" onPress={resetScanner} style={styles.resetBtn}>
-              Escanear Novamente
-            </Button>
-          </Surface>
-        )}
-
-        {/* Estado de Carregamento da API */}
-        {isLoading && (
-          <View style={styles.loadingWrapper}>
-            <ActivityIndicator animating={true} size="small" />
-            <Text variant="bodySmall" style={styles.loadingText}>
-              Buscando no banco de dados...
-            </Text>
-          </View>
-        )}
-
-        {/* Mensagens de Erro/Não Encontrado */}
-        {errorMessage && !isLoading && (
-          <Text style={styles.errorText} variant="bodyMedium">
-            {errorMessage}
+      {/* ── Abas do Alternador de Modo ─── */}
+      <View style={styles.tabContainer}>
+        <TouchableOpacity
+          style={[styles.modeTab, scanMode === "camera" && styles.modeTabActive]}
+          onPress={() => changeMode("camera")}
+        >
+          <Text style={[styles.modeTabText, scanMode === "camera" && styles.modeTabTextActive]}>
+            📷 Câmera
           </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.modeTab, scanMode === "manual" && styles.modeTabActive]}
+          onPress={() => changeMode("manual")}
+        >
+          <Text style={[styles.modeTabText, scanMode === "manual" && styles.modeTabTextActive]}>
+            ⌨️ Digitação
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        {/* ── MODO CÂMERA ─── */}
+        {scanMode === "camera" && (
+          <View style={{ width: "100%" }}>
+            {!scanned ? (
+              <View style={styles.cameraWrapper}>
+                {permission?.granted ? (
+                  <CameraView
+                    style={styles.camera}
+                    facing="back"
+                    enableTorch={isTorchOn}
+                    onBarcodeScanned={handleBarcodeScanned}
+                    barcodeScannerSettings={{
+                      barcodeTypes: ["ean13", "ean8", "upc_a", "upc_e", "itf14", "code128", "datamatrix", "qr"],
+                    }}
+                  />
+                ) : (
+                  <View style={[styles.camera, styles.centerContainer]}>
+                    <MaterialCommunityIcons name="camera-off" size={42} color={C.dangerColor} />
+                    <Text style={styles.permissionText}>
+                      {permission ? "Permissão da câmera não concedida." : "Carregando permissão da câmera..."}
+                    </Text>
+                    {permission && <Button mode="contained" onPress={requestPermission}>Permitir câmera</Button>}
+                    <Button mode="outlined" onPress={() => changeMode("manual")}>Usar busca manual</Button>
+                  </View>
+                )}
+                {permission?.granted && (
+                  <View style={styles.overlayScanner} pointerEvents="box-none">
+                    <View style={styles.scanTarget} />
+                    <TouchableOpacity
+                      style={[styles.torchBtn, isTorchOn && styles.torchBtnActive]}
+                      onPress={() => setIsTorchOn((prev) => !prev)}
+                      activeOpacity={0.8}
+                    >
+                      <MaterialCommunityIcons
+                        name={isTorchOn ? "flashlight" : "flashlight-off"}
+                        size={20}
+                        color={isTorchOn ? "#0F172A" : "#FFFFFF"}
+                      />
+                      <Text style={[styles.torchText, isTorchOn && styles.torchTextActive]}>
+                        {isTorchOn ? "Lanterna Ligada" : "Lanterna"}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+            ) : (
+              <Surface style={styles.scannedBanner} elevation={1}>
+                <MaterialCommunityIcons name="barcode" size={48} color={C.primaryColor} />
+                <Text variant="titleMedium" style={styles.scannedTitle}>
+                  Código Escaneado!
+                </Text>
+                <Button
+                  mode="contained"
+                  onPress={resetScanner}
+                  style={[styles.resetBtn, { backgroundColor: C.primaryColor }]}
+                >
+                  Escanear Novamente
+                </Button>
+              </Surface>
+            )}
+
+            {/* Mensagem de Erro com botão de Fallback */}
+            {errorMessage && !isLoading && (
+              <View style={styles.errorContainer}>
+                <Text style={styles.errorText} variant="bodyMedium">
+                  {errorMessage}
+                </Text>
+                {lastScannedCode && (
+                  <Text style={styles.scannedCodeText} variant="bodySmall" selectable>
+                    Código lido pela câmera: {lastScannedCode}
+                  </Text>
+                )}
+                <TouchableOpacity
+                  style={styles.fallbackManualBtn}
+                  onPress={() => changeMode("manual")}
+                >
+                  <Text style={styles.fallbackManualText}>Buscar Manualmente</Text>
+                </TouchableOpacity>
+                {lastScannedCode && errorMessage.includes("não encontrado") && <Button
+                  mode="contained-tonal" icon="plus" style={{ marginTop: 10 }}
+                  onPress={() => navigation.navigate("CadastroProduto", { codigoBarrasSugerido: parseGS1(lastScannedCode).gtin })}
+                >Cadastrar este produto</Button>}
+              </View>
+            )}
+          </View>
         )}
 
-        {/* Fallback de Busca Manual */}
-        {showManualSearch && (
+        {/* ── MODO MANUAL ─── */}
+        {scanMode === "manual" && (
           <Surface style={styles.manualSearchWrapper} elevation={1}>
             <Text variant="titleMedium" style={styles.manualTitle}>
               Buscar Produto Manualmente
@@ -209,20 +318,32 @@ export const ScannerScreen = () => {
                 onChangeText={setSearchQuery}
                 mode="outlined"
                 style={styles.searchInput}
+                outlineColor={C.border}
+                activeOutlineColor={C.primaryColor}
                 disabled={isLoading}
               />
-              <Button
-                mode="contained"
-                onPress={handleManualSearch}
-                loading={isLoading}
-                disabled={isLoading}
-                style={styles.searchBtn}
-              >
-                Buscar
-              </Button>
             </View>
+            <Button
+              mode="contained"
+              onPress={handleManualSearch}
+              loading={isLoading}
+              disabled={isLoading}
+              style={[styles.searchBtn, { backgroundColor: C.primaryColor }]}
+            >
+              Buscar Produto
+            </Button>
 
-            {/* Listagem de Resultados da Busca Manual */}
+            {errorMessage && !isLoading && (
+              <Text style={[styles.errorText, { marginTop: 12 }]} variant="bodyMedium">
+                {errorMessage}
+              </Text>
+            )}
+            {manualResults.length === 0 && errorMessage?.startsWith("Nenhum produto") && <Button
+              mode="contained-tonal" icon="plus" style={{ marginTop: 12 }}
+              onPress={() => navigation.navigate("CadastroProduto", { codigoBarrasSugerido: parseGS1(searchQuery).gtin })}
+            >Cadastrar este produto</Button>}
+
+            {/* Listagem de Resultados */}
             {manualResults.length > 0 && (
               <View style={styles.resultsContainer}>
                 <Text variant="labelMedium" style={styles.resultsHeader}>
@@ -231,10 +352,10 @@ export const ScannerScreen = () => {
                 {manualResults.map((item) => (
                   <List.Item
                     key={item.id}
-                    title={item.nome}
+                    title={() => <Text style={styles.itemTitle}>{item.nome}</Text>}
                     description={`Cód: ${item.codigoInterno || "N/A"} | EAN: ${item.codigoBarras || "N/A"} (${item.unidade})`}
-                    left={(props) => <List.Icon {...props} icon="package-variant" />}
-                    right={(props) => <List.Icon {...props} icon="chevron-right" />}
+                    left={(props) => <List.Icon {...props} icon="package-variant" color={C.primaryColor} />}
+                    right={(props) => <List.Icon {...props} icon="chevron-right" color={C.chevron} />}
                     onPress={() => {
                       const parsed = parseGS1(searchQuery);
                       const loteSugerido = parsed.isGS1 ? parsed.lote : undefined;
@@ -268,6 +389,16 @@ export const ScannerScreen = () => {
             )}
           </Surface>
         )}
+
+        {/* Estado de Carregamento da API */}
+        {isLoading && (
+          <View style={styles.loadingWrapper}>
+            <ActivityIndicator animating={true} size="small" color={C.primaryColor} />
+            <Text variant="bodySmall" style={styles.loadingText}>
+              Buscando no banco de dados...
+            </Text>
+          </View>
+        )}
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -276,20 +407,54 @@ export const ScannerScreen = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
+    backgroundColor: C.bg,
   },
   header: {
     flexDirection: "row",
     alignItems: "center",
-    paddingTop: Platform.OS === "ios" ? 40 : 10,
-    paddingBottom: 10,
-    backgroundColor: "#ffffff",
-    borderBottomWidth: 1,
-    borderBottomColor: "#e0e0e0",
+    justifyContent: "space-between",
+    backgroundColor: C.headerBg,
+    paddingTop: Platform.OS === "android" ? 50 : 60,
+    paddingBottom: 16,
+    paddingHorizontal: 16,
+    borderBottomLeftRadius: 20,
+    borderBottomRightRadius: 20,
+  },
+  backBtn: {
+    width: 40,
+    height: 40,
+    alignItems: "center",
+    justifyContent: "center",
   },
   headerTitle: {
-    fontWeight: "bold",
-    marginLeft: 8,
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#FFFFFF",
+  },
+  tabContainer: {
+    flexDirection: "row",
+    paddingHorizontal: 16,
+    marginTop: 16,
+    gap: 8,
+  },
+  modeTab: {
+    flex: 1,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#E5E7EB",
+  },
+  modeTabActive: {
+    backgroundColor: C.primaryColor,
+  },
+  modeTabText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: C.textGray,
+  },
+  modeTabTextActive: {
+    color: C.white,
   },
   scrollContent: {
     flexGrow: 1,
@@ -300,20 +465,21 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     padding: 32,
-    backgroundColor: "#f5f5f5",
+    backgroundColor: C.bg,
   },
   loadingText: {
     marginTop: 16,
-    color: "#7F8C8D",
+    color: C.textGray,
+    fontSize: 14,
   },
   permissionTitle: {
     fontWeight: "bold",
     marginBottom: 12,
-    color: "#2C3E50",
+    color: C.textDark,
   },
   permissionText: {
     textAlign: "center",
-    color: "#7F8C8D",
+    color: C.textGray,
     marginBottom: 24,
     lineHeight: 22,
   },
@@ -321,105 +487,161 @@ const styles = StyleSheet.create({
     width: "100%",
     borderRadius: 8,
     marginBottom: 12,
+    paddingVertical: 4,
   },
   backButton: {
     width: "100%",
     borderRadius: 8,
   },
   cameraWrapper: {
-    height: 300,
-    borderRadius: 12,
+    height: 320,
+    borderRadius: 16,
     overflow: "hidden",
     backgroundColor: "#000000",
     marginBottom: 16,
     position: "relative",
+    elevation: 4,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
   },
   camera: {
     flex: 1,
   },
   overlayScanner: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+    ...StyleSheet.absoluteFillObject,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "rgba(0,0,0,0.3)",
+    backgroundColor: "rgba(0,0,0,0.35)",
   },
   scanTarget: {
-    width: 220,
-    height: 120,
-    borderWidth: 2,
+    width: 240,
+    height: 140,
+    borderWidth: 2.5,
     borderColor: "#00E676",
     backgroundColor: "transparent",
-    borderRadius: 8,
+    borderRadius: 12,
+  },
+  torchBtn: {
+    position: "absolute",
+    bottom: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(15, 23, 42, 0.75)",
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.2)",
+  },
+  torchBtnActive: {
+    backgroundColor: "#FACC15",
+    borderColor: "#EAB308",
+  },
+  torchText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  torchTextActive: {
+    color: "#0F172A",
   },
   scannedBanner: {
     padding: 24,
-    borderRadius: 12,
-    backgroundColor: "#ffffff",
+    borderRadius: 16,
+    backgroundColor: C.white,
     alignItems: "center",
     marginBottom: 16,
   },
   scannedTitle: {
     fontWeight: "bold",
     marginVertical: 12,
-    color: "#2C3E50",
+    color: C.textDark,
   },
   resetBtn: {
-    borderRadius: 8,
+    borderRadius: 10,
     width: "80%",
+    paddingVertical: 4,
   },
   loadingWrapper: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    marginVertical: 16,
+    gap: 8,
+  },
+  errorContainer: {
+    alignItems: "center",
     marginVertical: 12,
+    gap: 8,
   },
   errorText: {
-    color: "#E53935",
+    color: C.dangerColor,
     textAlign: "center",
-    marginVertical: 12,
-    fontWeight: "500",
+    fontWeight: "600",
+    fontSize: 14,
+  },
+  scannedCodeText: {
+    color: C.textGray,
+    textAlign: "center",
+    fontSize: 12,
+  },
+  fallbackManualBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: "#FEE2E2",
+    borderWidth: 1,
+    borderColor: "#FCA5A5",
+  },
+  fallbackManualText: {
+    color: C.dangerColor,
+    fontWeight: "700",
+    fontSize: 12,
   },
   manualSearchWrapper: {
     padding: 16,
-    borderRadius: 12,
-    backgroundColor: "#ffffff",
-    marginTop: 8,
+    borderRadius: 16,
+    backgroundColor: C.white,
   },
   manualTitle: {
-    fontWeight: "bold",
-    color: "#2C3E50",
+    fontWeight: "800",
+    color: C.textDark,
     marginBottom: 16,
   },
   rowSearch: {
-    flexDirection: "row",
-    alignItems: "center",
+    marginBottom: 12,
   },
   searchInput: {
-    flex: 1,
-    marginRight: 8,
+    backgroundColor: C.white,
   },
   searchBtn: {
-    height: 52,
+    height: 48,
     justifyContent: "center",
-    borderRadius: 8,
+    borderRadius: 10,
+    paddingVertical: 4,
   },
   resultsContainer: {
     marginTop: 20,
     borderTopWidth: 1,
-    borderTopColor: "#f0f0f0",
-    paddingTop: 12,
+    borderTopColor: C.border,
+    paddingTop: 16,
   },
   resultsHeader: {
-    color: "#7F8C8D",
-    marginBottom: 8,
+    color: C.textGray,
+    fontWeight: "700",
+    marginBottom: 12,
   },
   listItem: {
     borderBottomWidth: 1,
-    borderBottomColor: "#f9f9f9",
-    paddingVertical: 4,
+    borderBottomColor: "#F3F4F6",
+    paddingVertical: 6,
+  },
+  itemTitle: {
+    fontWeight: "700",
+    color: C.textDark,
+    fontSize: 14,
   },
 });

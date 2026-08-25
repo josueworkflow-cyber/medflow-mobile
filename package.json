@@ -1,6 +1,6 @@
 {
   "name": "medflow-mobile",
-  "description": "Coletor de estoque MedFlow ERP",
+  "description": "Operações Mobile ERP MedFlow",
   "license": "0BSD",
   "version": "1.0.0",
   "main": "index.ts",
@@ -10,10 +10,11 @@
     "@react-navigation/native": "^6.1.18",
     "@react-navigation/native-stack": "^6.10.1",
     "axios": "^1.7.9",
-    "expo": "~54.0.35",
+    "expo": "~54.0.36",
     "expo-camera": "~17.0.10",
     "expo-dev-client": "~6.0.21",
     "expo-font": "~14.0.12",
+    "expo-image-picker": "~17.0.11",
     "expo-status-bar": "~3.0.9",
     "react": "19.1.0",
     "react-native": "0.81.5",
@@ -24,9 +25,9 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
-    "@types/react": "~19.2.2",
+    "@types/react": "~19.1.10",
     "@types/react-native-vector-icons": "^6.4.18",
-    "typescript": "~6.0.3"
+    "typescript": "~5.9.2"
   },
   "scripts": {
     "start": "expo start",
